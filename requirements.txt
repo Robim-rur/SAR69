@@ -3,4 +3,3 @@ pandas
 numpy
 yfinance
 plotly
-git+https://github.com/twopirllc/pandas-ta.git
