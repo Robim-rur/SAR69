@@ -163,11 +163,3 @@ st.dataframe(
 st.info(f"Tempo total: {tempo_total} segundos")
 
 st.success("Scanner concluído.")
-)
-
-st.dataframe(
-    df_debug,
-    use_container_width=True
-)
-
-st.success("Scanner concluído.")
