@@ -1,12 +1,8 @@
-# app.py
-
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta
 import plotly.express as px
-from datetime import datetime
 
 # =========================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -18,111 +14,97 @@ st.set_page_config(
 )
 
 # =========================================================
-# TÍTULO
+# FUNÇÕES INDICADORES
 # =========================================================
 
-st.title("🚀 Terminal Buy Side PRO")
-st.caption(
-    "EMA 69 + SAR + DMI/ADX + Estocástico + Ranking Probabilístico"
-)
+def ema(series, period):
+    return series.ewm(span=period, adjust=False).mean()
+
+def stochastic(df, k_period=14, d_period=3):
+    low_min = df["Low"].rolling(window=k_period).min()
+    high_max = df["High"].rolling(window=k_period).max()
+
+    k = 100 * ((df["Close"] - low_min) / (high_max - low_min))
+    d = k.rolling(window=d_period).mean()
+
+    return k, d
+
+def psar(df, af=0.02, af_max=0.2):
+    high = df["High"].values
+    low = df["Low"].values
+    close = df["Close"].values
+
+    length = len(df)
+
+    psar = close.copy()
+    bull = True
+
+    hp = high[0]
+    lp = low[0]
+
+    accel = af
+
+    for i in range(2, length):
+
+        prev_psar = psar[i - 1]
+
+        if bull:
+            psar[i] = prev_psar + accel * (hp - prev_psar)
+        else:
+            psar[i] = prev_psar + accel * (lp - prev_psar)
+
+        reverse = False
+
+        if bull:
+            if low[i] < psar[i]:
+                bull = False
+                reverse = True
+                psar[i] = hp
+                lp = low[i]
+                accel = af
+        else:
+            if high[i] > psar[i]:
+                bull = True
+                reverse = True
+                psar[i] = lp
+                hp = high[i]
+                accel = af
+
+        if not reverse:
+            if bull:
+                if high[i] > hp:
+                    hp = high[i]
+                    accel = min(accel + af, af_max)
+
+                psar[i] = min(psar[i], low[i - 1], low[i - 2])
+
+            else:
+                if low[i] < lp:
+                    lp = low[i]
+                    accel = min(accel + af, af_max)
+
+                psar[i] = max(psar[i], high[i - 1], high[i - 2])
+
+    return pd.Series(psar, index=df.index)
 
 # =========================================================
-# LISTA DE ATIVOS
-# =========================================================
-
-ATIVOS = sorted(list(set([
-
-    # Bancos
-    "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
-    "BPAC11.SA","BRSR6.SA",
-
-    # Energia / Elétricas
-    "TAEE11.SA","TRPL4.SA","CMIG4.SA","CPLE6.SA","CPFE3.SA","EQTL3.SA",
-    "ALUP11.SA","NEOE3.SA","ENGI11.SA","EGIE3.SA","CSMG3.SA","SBSP3.SA",
-    "SAPR11.SA","SAPR4.SA",
-
-    # Commodities
-    "PETR4.SA","PETR3.SA","PRIO3.SA","VALE3.SA","SUZB3.SA","KLBN11.SA",
-    "RECV3.SA",
-
-    # Consumo / Serviços
-    "WEGE3.SA","TOTS3.SA","VIVT3.SA","TIMS3.SA","ABEV3.SA","PSSA3.SA",
-    "MULT3.SA","ALOS3.SA","ODPV3.SA","CYRE3.SA","KEPL3.SA","POMO4.SA",
-    "RAIL3.SA","RDOR3.SA","JBSS3.SA",
-
-    # ETFs
-    "BOVA11.SA","SMAL11.SA","IVVB11.SA","DIVO11.SA","IEEX11.SA",
-
-    # FIIs
-    "HGLG11.SA","XPLG11.SA","VILG11.SA","BRCO11.SA","BTLG11.SA",
-    "XPML11.SA","VISC11.SA","HSML11.SA","MALL11.SA","KNRI11.SA",
-    "JSRE11.SA","PVBI11.SA","HGRE11.SA","MXRF11.SA","KNCR11.SA",
-    "KNIP11.SA","CPTS11.SA","IRDM11.SA","TGAR11.SA","TRXF11.SA",
-    "HGRU11.SA","ALZR11.SA","RBRR11.SA","KNSC11.SA","HGCR11.SA",
-    "MCCI11.SA","RECR11.SA","VRTA11.SA","BCFF11.SA","HFOF11.SA",
-    "XPSF11.SA","RBRP11.SA","RBRF11.SA","RZTR11.SA","RURA11.SA",
-    "VGIR11.SA","CVBI11.SA","GGRC11.SA","AUVP11.SA","GARE11.SA",
-
-    # BDRs
-    "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA","META34.SA",
-    "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
-
-])))
-
-# =========================================================
-# SIDEBAR
-# =========================================================
-
-st.sidebar.header("⚙️ Configurações")
-
-periodo = st.sidebar.selectbox(
-    "Período histórico",
-    ["1y", "2y", "5y"],
-    index=1
-)
-
-adx_minimo = st.sidebar.slider(
-    "ADX mínimo",
-    10,
-    40,
-    20
-)
-
-zscore_max = st.sidebar.slider(
-    "Z-Score máximo",
-    -3.0,
-    3.0,
-    1.0,
-    step=0.1
-)
-
-mostrar_grafico = st.sidebar.checkbox(
-    "Mostrar gráfico do ativo selecionado",
-    value=True
-)
-
-# =========================================================
-# CACHE
+# DOWNLOAD DADOS
 # =========================================================
 
 @st.cache_data(ttl=3600)
-def baixar_dados(ticker, periodo):
+def carregar_dados(ticker):
+
     try:
         df = yf.download(
             ticker,
-            period=periodo,
+            period="1y",
             interval="1d",
-            progress=False,
-            auto_adjust=True
+            auto_adjust=True,
+            progress=False
         )
 
-        if df.empty:
+        if df.empty or len(df) < 100:
             return None
-
-        if len(df) < 120:
-            return None
-
-        df.dropna(inplace=True)
 
         return df
 
@@ -130,327 +112,220 @@ def baixar_dados(ticker, periodo):
         return None
 
 # =========================================================
-# INDICADORES
+# CALCULAR SETUP
 # =========================================================
 
-def calcular_indicadores(df):
+def calcular_setup(df):
 
     # EMA 69
-    df["EMA69"] = ta.ema(df["Close"], length=69)
+    df["EMA69"] = ema(df["Close"], 69)
 
-    # SAR
-    sar = ta.psar(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        af=0.02,
-        max_af=0.2
-    )
+    # PSAR
+    df["PSAR"] = psar(df)
 
-    psar_long_col = [c for c in sar.columns if "PSARl" in c]
-    psar_short_col = [c for c in sar.columns if "PSARs" in c]
-
-    if len(psar_long_col) > 0:
-        df["SAR_LONG"] = sar[psar_long_col[0]]
-
-    if len(psar_short_col) > 0:
-        df["SAR_SHORT"] = sar[psar_short_col[0]]
-
-    # DMI / ADX
-    adx = ta.adx(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        length=14
-    )
-
-    df["ADX"] = adx["ADX_14"]
-    df["DMP"] = adx["DMP_14"]
-    df["DMN"] = adx["DMN_14"]
-
-    # Estocástico
-    stoch = ta.stoch(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        k=14,
-        d=3,
-        smooth_k=3
-    )
-
-    df["STOCH_K"] = stoch["STOCHk_14_3_3"]
-    df["STOCH_D"] = stoch["STOCHd_14_3_3"]
-
-    # ATR
-    df["ATR"] = ta.atr(
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
-        length=14
-    )
+    # Tendência PSAR
+    df["PSAR_BULL"] = df["PSAR"] < df["Close"]
 
     # Z-SCORE
-    media = df["Close"].rolling(20).mean()
-    desvio = df["Close"].rolling(20).std()
+    periodo = 20
 
-    df["Z_SCORE"] = (
-        (df["Close"] - media) / desvio
-    )
+    media = df["Close"].rolling(periodo).mean()
+    desvio = df["Close"].rolling(periodo).std()
+
+    df["ZScore"] = (df["Close"] - media) / desvio
+
+    # STOCH
+    k, d = stochastic(df)
+
+    df["STOCH_K"] = k
+    df["STOCH_D"] = d
 
     # Distância EMA
-    df["DIST_EMA"] = (
-        ((df["Close"] / df["EMA69"]) - 1) * 100
-    )
-
-    # Força tendência
-    df["FORCA"] = (
-        (df["DMP"] - df["DMN"]) + df["ADX"]
-    )
-
-    # Volatilidade
-    df["VOLAT"] = (
-        (df["ATR"] / df["Close"]) * 100
-    )
-
-    df.dropna(inplace=True)
+    df["DistEMA"] = ((df["Close"] / df["EMA69"]) - 1) * 100
 
     return df
 
 # =========================================================
-# PROBABILIDADE
+# INTERFACE
 # =========================================================
 
-def calcular_score(ultimo):
-
-    score = 0
-
-    # Tendência
-    if ultimo["Close"] > ultimo["EMA69"]:
-        score += 25
-
-    # DMI
-    if ultimo["DMP"] > ultimo["DMN"]:
-        score += 20
-
-    # ADX
-    if ultimo["ADX"] > 20:
-        score += 15
-
-    # Estocástico
-    if ultimo["STOCH_K"] > ultimo["STOCH_D"]:
-        score += 10
-
-    # SAR
-    if not pd.isna(ultimo["SAR_LONG"]):
-        score += 15
-
-    # Z-Score
-    if ultimo["Z_SCORE"] < 0:
-        score += 10
-
-    # Distância EMA
-    if ultimo["DIST_EMA"] < 8:
-        score += 5
-
-    return min(score, 100)
+st.title("🚀 Terminal Buy Side PRO")
+st.markdown(
+    """
+Scanner Buy Side:
+- Preço acima da EMA 69
+- PSAR abaixo do preço
+- Ranking probabilístico via Z-Score
+- Estocástico para timing
+"""
+)
 
 # =========================================================
-# ESCANEAMENTO
+# LISTA COMPLETA DE ATIVOS
 # =========================================================
 
-if st.sidebar.button("🔍 ESCANEAR MERCADO"):
+ativos_raw = [
+
+    # Bancos
+    "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
+    "BPAC11.SA","BRSR6.SA","BMGB4.SA","PSSA3.SA","IRBR3.SA",
+
+    # Energia / Petróleo
+    "PETR4.SA","PETR3.SA","PRIO3.SA","RECV3.SA","RRRP3.SA",
+    "EQTL3.SA","TAEE11.SA","CPLE6.SA","CMIG4.SA","TRPL4.SA",
+    "EGIE3.SA","CPFE3.SA","ELET3.SA","ELET6.SA","ALUP11.SA",
+    "NEOE3.SA","ENGI11.SA","CSMG3.SA","SBSP3.SA","SAPR11.SA",
+    "SAPR4.SA",
+
+    # Commodities / Industrial
+    "VALE3.SA","GGBR4.SA","CSNA3.SA","USIM5.SA","SUZB3.SA",
+    "KLBN11.SA","WEGE3.SA","RAIL3.SA","POMO4.SA","KEPL3.SA",
+
+    # Consumo
+    "ABEV3.SA","VIVT3.SA","TIMS3.SA","MULT3.SA","ALOS3.SA",
+    "ODPV3.SA","RDOR3.SA","CYRE3.SA","TOTS3.SA","JBSS3.SA",
+
+    # ETFs
+    "BOVA11.SA","SMAL11.SA","IVVB11.SA","DIVO11.SA",
+    "XFIX11.SA","GOLD11.SA","PIBB11.SA","ECOO11.SA",
+    "MATB11.SA","BOVV11.SA","FIND11.SA","SPXI11.SA",
+    "NASD11.SA","ACWI11.SA","WRLD11.SA","EURP11.SA",
+    "TECK11.SA","HASH11.SA","ETHE11.SA","QBTC11.SA",
+
+    # FIIs
+    "HGLG11.SA","XPLG11.SA","VILG11.SA","BRCO11.SA",
+    "BTLG11.SA","XPML11.SA","VISC11.SA","HSML11.SA",
+    "MALL11.SA","KNRI11.SA","JSRE11.SA","PVBI11.SA",
+    "HGRE11.SA","MXRF11.SA","KNCR11.SA","KNIP11.SA",
+    "CPTS11.SA","IRDM11.SA","TGAR11.SA","TRXF11.SA",
+    "HGRU11.SA","ALZR11.SA","XPCA11.SA","VGIA11.SA",
+    "RBRR11.SA","KNSC11.SA","HGCR11.SA","MCCI11.SA",
+    "RECR11.SA","VRTA11.SA","BCFF11.SA","HFOF11.SA",
+    "XPSF11.SA","RBRP11.SA","RBRF11.SA","RZTR11.SA",
+    "RURA11.SA","VGIR11.SA","CVBI11.SA","UTLL11.SA",
+    "GGRC11.SA","AUVP11.SA","GARE11.SA",
+
+    # BDRs
+    "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA",
+    "META34.SA","NVDC34.SA","JPMC34.SA","DISB34.SA",
+    "SBUX34.SA","TSLA34.SA","NFLX34.SA","MCDC34.SA",
+    "P1DD34.SA","BERK34.SA","PFIZ34.SA","N1KE34.SA",
+    "COCA34.SA","WALM34.SA","BOAC34.SA","PEPB34.SA"
+]
+
+lista_ativos = sorted(list(set(ativos_raw)))
+
+# =========================================================
+# BOTÃO SCAN
+# =========================================================
+
+if st.button("🔍 ESCANEAR MERCADO"):
 
     resultados = []
 
-    progresso = st.progress(0)
+    barra = st.progress(0)
 
-    total = len(ATIVOS)
+    total = len(lista_ativos)
 
-    inicio = datetime.now()
+    for i, ticker in enumerate(lista_ativos):
 
-    for idx, ticker in enumerate(ATIVOS):
-
-        df = baixar_dados(ticker, periodo)
+        df = carregar_dados(ticker)
 
         if df is not None:
 
             try:
 
-                df = calcular_indicadores(df)
+                df = calcular_setup(df)
 
                 ultimo = df.iloc[-1]
                 anterior = df.iloc[-2]
 
-                # =====================================================
-                # FILTROS PRINCIPAIS
-                # =====================================================
+                preco = float(ultimo["Close"])
+                ema69 = float(ultimo["EMA69"])
+                psar_val = float(ultimo["PSAR"])
 
-                tendencia_ok = (
-                    ultimo["Close"] > ultimo["EMA69"]
-                )
+                zscore = float(ultimo["ZScore"])
+                stoch_k = float(ultimo["STOCH_K"])
+                dist_ema = float(ultimo["DistEMA"])
 
-                dmi_ok = (
-                    ultimo["DMP"] > ultimo["DMN"]
-                )
+                # FILTRO BUY SIDE
+                if preco > ema69 and psar_val < preco:
 
-                adx_ok = (
-                    ultimo["ADX"] >= adx_minimo
-                )
+                    sinal_novo = (
+                        anterior["PSAR"] > anterior["Close"]
+                        and ultimo["PSAR"] < ultimo["Close"]
+                    )
 
-                stoch_ok = (
-                    ultimo["STOCH_K"] > ultimo["STOCH_D"]
-                )
-
-                sar_ok = (
-                    not pd.isna(ultimo["SAR_LONG"])
-                )
-
-                zscore_ok = (
-                    ultimo["Z_SCORE"] <= zscore_max
-                )
-
-                # =====================================================
-                # DETECÇÃO NOVO SINAL SAR
-                # =====================================================
-
-                sinal_novo = False
-
-                if (
-                    pd.isna(anterior["SAR_LONG"])
-                    and
-                    not pd.isna(ultimo["SAR_LONG"])
-                ):
-                    sinal_novo = True
-
-                # =====================================================
-                # SETUP FINAL
-                # =====================================================
-
-                if (
-                    tendencia_ok
-                    and dmi_ok
-                    and adx_ok
-                    and stoch_ok
-                    and sar_ok
-                    and zscore_ok
-                ):
-
-                    probabilidade = calcular_score(ultimo)
+                    status = (
+                        "🔥 SINAL NOVO"
+                        if sinal_novo
+                        else "Alta Mantida"
+                    )
 
                     resultados.append({
-
                         "Ticker": ticker,
-
-                        "Probabilidade %": probabilidade,
-
-                        "Preço": round(float(ultimo["Close"]), 2),
-
-                        "ADX": round(float(ultimo["ADX"]), 2),
-
-                        "D+": round(float(ultimo["DMP"]), 2),
-
-                        "D-": round(float(ultimo["DMN"]), 2),
-
-                        "Z-Score": round(float(ultimo["Z_SCORE"]), 2),
-
-                        "Stoch K": round(float(ultimo["STOCH_K"]), 2),
-
-                        "Dist EMA69 %": round(float(ultimo["DIST_EMA"]), 2),
-
-                        "Volatilidade %": round(float(ultimo["VOLAT"]), 2),
-
-                        "SAR": (
-                            "SINAL NOVO"
-                            if sinal_novo
-                            else "EM TENDÊNCIA"
-                        )
-
+                        "Preço": round(preco, 2),
+                        "Z-Score": round(zscore, 2),
+                        "Status": status,
+                        "Stoch K": round(stoch_k, 2),
+                        "Dist EMA69 %": round(dist_ema, 2)
                     })
 
             except:
                 pass
 
-        progresso.progress((idx + 1) / total)
+        barra.progress((i + 1) / total)
 
-    fim = datetime.now()
-
-    tempo = fim - inicio
-
-    # =========================================================
+    # =====================================================
     # RESULTADOS
-    # =========================================================
+    # =====================================================
 
     if len(resultados) > 0:
 
-        resultado_df = pd.DataFrame(resultados)
+        df_resultado = pd.DataFrame(resultados)
 
-        resultado_df = resultado_df.sort_values(
-            by=[
-                "Probabilidade %",
-                "Z-Score"
-            ],
-            ascending=[
-                False,
-                True
-            ]
+        prioridade = {
+            "🔥 SINAL NOVO": 0,
+            "Alta Mantida": 1
+        }
+
+        df_resultado["Prioridade"] = df_resultado["Status"].map(prioridade)
+
+        df_resultado = df_resultado.sort_values(
+            by=["Prioridade", "Z-Score"],
+            ascending=[True, True]
         )
 
-        st.success(
-            f"✅ {len(resultado_df)} ativos encontrados | Tempo: {tempo}"
-        )
+        df_resultado = df_resultado.drop(columns=["Prioridade"])
+
+        st.success(f"{len(df_resultado)} ativos encontrados.")
 
         st.dataframe(
-            resultado_df,
+            df_resultado,
             use_container_width=True,
             height=700
         )
 
-        # =====================================================
+        # =================================================
         # GRÁFICO
-        # =====================================================
+        # =================================================
 
-        if mostrar_grafico:
+        fig = px.scatter(
+            df_resultado,
+            x="Z-Score",
+            y="Dist EMA69 %",
+            color="Status",
+            hover_data=["Ticker"],
+            title="Mapa Probabilístico"
+        )
 
-            ativo_escolhido = st.selectbox(
-                "Selecione um ativo",
-                resultado_df["Ticker"].tolist()
-            )
-
-            df_graf = baixar_dados(
-                ativo_escolhido,
-                periodo
-            )
-
-            if df_graf is not None:
-
-                df_graf = calcular_indicadores(df_graf)
-
-                graf = px.line(
-                    df_graf,
-                    y=[
-                        "Close",
-                        "EMA69"
-                    ],
-                    title=ativo_escolhido
-                )
-
-                st.plotly_chart(
-                    graf,
-                    use_container_width=True
-                )
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
     else:
 
         st.warning(
-            "Nenhum ativo encontrado nos critérios atuais."
+            "Nenhum ativo encontrado no setup Buy Side."
         )
-
-# =========================================================
-# RODAPÉ
-# =========================================================
-
-st.markdown("---")
-
-st.caption(
-    "Terminal Buy Side PRO | EMA69 + DMI + ADX + SAR + Estocástico + Z-Score"
-)
