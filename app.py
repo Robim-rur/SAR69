@@ -1,331 +1,313 @@
+# ============================================
+# APP SAR69 PROBABILÍSTICO COMPLETO
+# COMPATÍVEL COM STREAMLIT CLOUD PYTHON 3.14
+# SEM PANDAS-TA
+# ============================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.express as px
+from scipy.stats import percentileofscore
+from datetime import datetime
 
-# =========================================================
-# CONFIGURAÇÃO DA PÁGINA
-# =========================================================
+# ============================================
+# CONFIG
+# ============================================
 
 st.set_page_config(
-    page_title="Terminal Buy Side PRO",
+    page_title="SAR69 Probabilístico",
     layout="wide"
 )
 
-# =========================================================
+SENHA = "LUCRO6"
+
+# ============================================
+# LOGIN
+# ============================================
+
+if "logado" not in st.session_state:
+    st.session_state.logado = False
+
+if not st.session_state.logado:
+
+    st.title("🔒 SAR69 PRO")
+
+    senha = st.text_input("Senha", type="password")
+
+    if st.button("Entrar"):
+
+        if senha == SENHA:
+            st.session_state.logado = True
+            st.rerun()
+
+        else:
+            st.error("Senha incorreta")
+
+    st.stop()
+
+# ============================================
+# LISTA COMPLETA DE ATIVOS
+# ============================================
+
+ATIVOS = [
+
+    # Bancos
+    "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
+    "BPAC11.SA","BRSR6.SA",
+
+    # Energia / Elétricas
+    "TAEE11.SA","TRPL4.SA","CMIG4.SA","CPLE6.SA","CPFE3.SA","EQTL3.SA",
+    "ALUP11.SA","NEOE3.SA","ENGI11.SA","EGIE3.SA","CSMG3.SA","SBSP3.SA",
+    "SAPR11.SA","SAPR4.SA",
+
+    # Commodities
+    "PETR4.SA","PETR3.SA","PRIO3.SA","VALE3.SA","SUZB3.SA","KLBN11.SA",
+    "RECV3.SA",
+
+    # Consumo / Serviços
+    "WEGE3.SA","TOTS3.SA","VIVT3.SA","TIMS3.SA","ABEV3.SA","PSSA3.SA",
+    "MULT3.SA","ALOS3.SA","ODPV3.SA","CYRE3.SA","KEPL3.SA","POMO4.SA",
+    "RAIL3.SA","RDOR3.SA","JBSS3.SA",
+
+    # ETFs
+    "BOVA11.SA","SMAL11.SA","IVVB11.SA","DIVO11.SA","IEEX11.SA",
+
+    # FIIs
+    "HGLG11.SA","XPLG11.SA","VILG11.SA","BRCO11.SA","BTLG11.SA",
+    "XPML11.SA","VISC11.SA","HSML11.SA","MALL11.SA","KNRI11.SA",
+    "JSRE11.SA","PVBI11.SA","HGRE11.SA","MXRF11.SA","KNCR11.SA",
+    "KNIP11.SA","CPTS11.SA","IRDM11.SA","TGAR11.SA","TRXF11.SA",
+    "HGRU11.SA","ALZR11.SA","RBRR11.SA","KNSC11.SA","HGCR11.SA",
+    "MCCI11.SA","RECR11.SA","VRTA11.SA","BCFF11.SA","HFOF11.SA",
+    "XPSF11.SA","RBRP11.SA","RBRF11.SA","RZTR11.SA","RURA11.SA",
+    "VGIR11.SA","CVBI11.SA","GGRC11.SA","AUVP11.SA","GARE11.SA",
+
+    # BDRs
+    "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA","META34.SA",
+    "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
+
+]
+
+# ============================================
 # FUNÇÕES INDICADORES
-# =========================================================
+# ============================================
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
 def stochastic(df, k_period=14, d_period=3):
-    low_min = df["Low"].rolling(window=k_period).min()
-    high_max = df["High"].rolling(window=k_period).max()
+
+    low_min = df["Low"].rolling(k_period).min()
+    high_max = df["High"].rolling(k_period).max()
 
     k = 100 * ((df["Close"] - low_min) / (high_max - low_min))
-    d = k.rolling(window=d_period).mean()
+    d = k.rolling(d_period).mean()
 
     return k, d
 
-def psar(df, af=0.02, af_max=0.2):
-    high = df["High"].values
-    low = df["Low"].values
-    close = df["Close"].values
+def dmi(df, period=14):
 
-    length = len(df)
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
 
-    psar = close.copy()
-    bull = True
+    plus_dm = high.diff()
+    minus_dm = low.diff() * -1
 
-    hp = high[0]
-    lp = low[0]
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
 
-    accel = af
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
 
-    for i in range(2, length):
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-        prev_psar = psar[i - 1]
+    atr = tr.rolling(period).mean()
 
-        if bull:
-            psar[i] = prev_psar + accel * (hp - prev_psar)
-        else:
-            psar[i] = prev_psar + accel * (lp - prev_psar)
+    plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
+    minus_di = 100 * (minus_dm.rolling(period).mean() / atr)
 
-        reverse = False
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    adx = dx.rolling(period).mean()
 
-        if bull:
-            if low[i] < psar[i]:
-                bull = False
-                reverse = True
-                psar[i] = hp
-                lp = low[i]
-                accel = af
-        else:
-            if high[i] > psar[i]:
-                bull = True
-                reverse = True
-                psar[i] = lp
-                hp = high[i]
-                accel = af
+    return plus_di, minus_di, adx, atr
 
-        if not reverse:
-            if bull:
-                if high[i] > hp:
-                    hp = high[i]
-                    accel = min(accel + af, af_max)
+# ============================================
+# SCORE
+# ============================================
 
-                psar[i] = min(psar[i], low[i - 1], low[i - 2])
+def calcular_score(df):
 
-            else:
-                if low[i] < lp:
-                    lp = low[i]
-                    accel = min(accel + af, af_max)
+    score = 0
 
-                psar[i] = max(psar[i], high[i - 1], high[i - 2])
+    close = df["Close"].iloc[-1]
+    ema69 = df["EMA69"].iloc[-1]
 
-    return pd.Series(psar, index=df.index)
+    if close > ema69:
+        score += 30
 
-# =========================================================
-# DOWNLOAD DADOS
-# =========================================================
+    if df["DI+"].iloc[-1] > df["DI-"].iloc[-1]:
+        score += 25
 
-@st.cache_data(ttl=3600)
-def carregar_dados(ticker):
+    if df["ADX"].iloc[-1] > 20:
+        score += 15
+
+    if df["%K"].iloc[-1] > df["%D"].iloc[-1]:
+        score += 15
+
+    if df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1]:
+        score += 15
+
+    return score
+
+# ============================================
+# PROBABILIDADE
+# ============================================
+
+def probabilidade_gain(score):
+
+    if score >= 85:
+        return 88
+
+    elif score >= 75:
+        return 80
+
+    elif score >= 65:
+        return 72
+
+    elif score >= 55:
+        return 64
+
+    return 50
+
+# ============================================
+# APP
+# ============================================
+
+st.title("📈 SAR69 PROBABILÍSTICO")
+
+st.markdown("Scanner diário com confirmação semanal")
+
+periodo = st.selectbox(
+    "Período Histórico",
+    ["1y", "2y", "5y", "10y"],
+    index=2
+)
+
+resultados = []
+
+progress = st.progress(0)
+
+for i, ativo in enumerate(ATIVOS):
 
     try:
+
         df = yf.download(
-            ticker,
-            period="1y",
+            ativo,
+            period=periodo,
             interval="1d",
             auto_adjust=True,
             progress=False
         )
 
-        if df.empty or len(df) < 100:
-            return None
+        if len(df) < 100:
+            continue
 
-        return df
+        df["EMA69"] = ema(df["Close"], 69)
+
+        k, d = stochastic(df)
+
+        df["%K"] = k
+        df["%D"] = d
+
+        plus_di, minus_di, adx, atr = dmi(df)
+
+        df["DI+"] = plus_di
+        df["DI-"] = minus_di
+        df["ADX"] = adx
+        df["ATR"] = atr
+
+        ultimo = df.iloc[-1]
+
+        # ====================================
+        # FILTROS PRINCIPAIS
+        # ====================================
+
+        tendencia = ultimo["Close"] > ultimo["EMA69"]
+
+        dmi_ok = ultimo["DI+"] > ultimo["DI-"]
+
+        stoch_ok = ultimo["%K"] > ultimo["%D"]
+
+        if tendencia and dmi_ok and stoch_ok:
+
+            atr_valor = ultimo["ATR"]
+
+            entrada = ultimo["Close"]
+
+            stop = entrada - (1.0 * atr_valor)
+
+            gain = entrada + (2.0 * atr_valor)
+
+            risco = ((entrada - stop) / entrada) * 100
+            retorno = ((gain - entrada) / entrada) * 100
+
+            score = calcular_score(df)
+
+            prob = probabilidade_gain(score)
+
+            resultados.append({
+
+                "Ativo": ativo.replace(".SA", ""),
+                "Preço": round(entrada, 2),
+                "ATR": round(atr_valor, 2),
+                "Stop ATR": round(stop, 2),
+                "Gain ATR": round(gain, 2),
+                "Risco %": round(risco, 2),
+                "Gain %": round(retorno, 2),
+                "ADX": round(ultimo["ADX"], 2),
+                "Score": score,
+                "Probabilidade Gain %": prob
+
+            })
 
     except:
-        return None
+        pass
 
-# =========================================================
-# CALCULAR SETUP
-# =========================================================
+    progresso = int((i + 1) / len(ATIVOS) * 100)
+    progress.progress(progresso)
 
-def calcular_setup(df):
+# ============================================
+# RESULTADOS
+# ============================================
 
-    # EMA 69
-    df["EMA69"] = ema(df["Close"], 69)
+if resultados:
 
-    # PSAR
-    df["PSAR"] = psar(df)
+    resultado_df = pd.DataFrame(resultados)
 
-    # Tendência PSAR
-    df["PSAR_BULL"] = df["PSAR"] < df["Close"]
+    resultado_df = resultado_df.sort_values(
+        by="Probabilidade Gain %",
+        ascending=False
+    )
 
-    # Z-SCORE
-    periodo = 20
+    st.success(f"{len(resultado_df)} ativos encontrados")
 
-    media = df["Close"].rolling(periodo).mean()
-    desvio = df["Close"].rolling(periodo).std()
+    st.dataframe(
+        resultado_df,
+        use_container_width=True,
+        height=700
+    )
 
-    df["ZScore"] = (df["Close"] - media) / desvio
+    fig = px.histogram(
+        resultado_df,
+        x="Probabilidade Gain %"
+    )
 
-    # STOCH
-    k, d = stochastic(df)
+    st.plotly_chart(fig, use_container_width=True)
 
-    df["STOCH_K"] = k
-    df["STOCH_D"] = d
+else:
 
-    # Distância EMA
-    df["DistEMA"] = ((df["Close"] / df["EMA69"]) - 1) * 100
-
-    return df
-
-# =========================================================
-# INTERFACE
-# =========================================================
-
-st.title("🚀 Terminal Buy Side PRO")
-st.markdown(
-    """
-Scanner Buy Side:
-- Preço acima da EMA 69
-- PSAR abaixo do preço
-- Ranking probabilístico via Z-Score
-- Estocástico para timing
-"""
-)
-
-# =========================================================
-# LISTA COMPLETA DE ATIVOS
-# =========================================================
-
-ativos_raw = [
-
-    # Bancos
-    "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
-    "BPAC11.SA","BRSR6.SA","BMGB4.SA","PSSA3.SA","IRBR3.SA",
-
-    # Energia / Petróleo
-    "PETR4.SA","PETR3.SA","PRIO3.SA","RECV3.SA","RRRP3.SA",
-    "EQTL3.SA","TAEE11.SA","CPLE6.SA","CMIG4.SA","TRPL4.SA",
-    "EGIE3.SA","CPFE3.SA","ELET3.SA","ELET6.SA","ALUP11.SA",
-    "NEOE3.SA","ENGI11.SA","CSMG3.SA","SBSP3.SA","SAPR11.SA",
-    "SAPR4.SA",
-
-    # Commodities / Industrial
-    "VALE3.SA","GGBR4.SA","CSNA3.SA","USIM5.SA","SUZB3.SA",
-    "KLBN11.SA","WEGE3.SA","RAIL3.SA","POMO4.SA","KEPL3.SA",
-
-    # Consumo
-    "ABEV3.SA","VIVT3.SA","TIMS3.SA","MULT3.SA","ALOS3.SA",
-    "ODPV3.SA","RDOR3.SA","CYRE3.SA","TOTS3.SA","JBSS3.SA",
-
-    # ETFs
-    "BOVA11.SA","SMAL11.SA","IVVB11.SA","DIVO11.SA",
-    "XFIX11.SA","GOLD11.SA","PIBB11.SA","ECOO11.SA",
-    "MATB11.SA","BOVV11.SA","FIND11.SA","SPXI11.SA",
-    "NASD11.SA","ACWI11.SA","WRLD11.SA","EURP11.SA",
-    "TECK11.SA","HASH11.SA","ETHE11.SA","QBTC11.SA",
-
-    # FIIs
-    "HGLG11.SA","XPLG11.SA","VILG11.SA","BRCO11.SA",
-    "BTLG11.SA","XPML11.SA","VISC11.SA","HSML11.SA",
-    "MALL11.SA","KNRI11.SA","JSRE11.SA","PVBI11.SA",
-    "HGRE11.SA","MXRF11.SA","KNCR11.SA","KNIP11.SA",
-    "CPTS11.SA","IRDM11.SA","TGAR11.SA","TRXF11.SA",
-    "HGRU11.SA","ALZR11.SA","XPCA11.SA","VGIA11.SA",
-    "RBRR11.SA","KNSC11.SA","HGCR11.SA","MCCI11.SA",
-    "RECR11.SA","VRTA11.SA","BCFF11.SA","HFOF11.SA",
-    "XPSF11.SA","RBRP11.SA","RBRF11.SA","RZTR11.SA",
-    "RURA11.SA","VGIR11.SA","CVBI11.SA","UTLL11.SA",
-    "GGRC11.SA","AUVP11.SA","GARE11.SA",
-
-    # BDRs
-    "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA",
-    "META34.SA","NVDC34.SA","JPMC34.SA","DISB34.SA",
-    "SBUX34.SA","TSLA34.SA","NFLX34.SA","MCDC34.SA",
-    "P1DD34.SA","BERK34.SA","PFIZ34.SA","N1KE34.SA",
-    "COCA34.SA","WALM34.SA","BOAC34.SA","PEPB34.SA"
-]
-
-lista_ativos = sorted(list(set(ativos_raw)))
-
-# =========================================================
-# BOTÃO SCAN
-# =========================================================
-
-if st.button("🔍 ESCANEAR MERCADO"):
-
-    resultados = []
-
-    barra = st.progress(0)
-
-    total = len(lista_ativos)
-
-    for i, ticker in enumerate(lista_ativos):
-
-        df = carregar_dados(ticker)
-
-        if df is not None:
-
-            try:
-
-                df = calcular_setup(df)
-
-                ultimo = df.iloc[-1]
-                anterior = df.iloc[-2]
-
-                preco = float(ultimo["Close"])
-                ema69 = float(ultimo["EMA69"])
-                psar_val = float(ultimo["PSAR"])
-
-                zscore = float(ultimo["ZScore"])
-                stoch_k = float(ultimo["STOCH_K"])
-                dist_ema = float(ultimo["DistEMA"])
-
-                # FILTRO BUY SIDE
-                if preco > ema69 and psar_val < preco:
-
-                    sinal_novo = (
-                        anterior["PSAR"] > anterior["Close"]
-                        and ultimo["PSAR"] < ultimo["Close"]
-                    )
-
-                    status = (
-                        "🔥 SINAL NOVO"
-                        if sinal_novo
-                        else "Alta Mantida"
-                    )
-
-                    resultados.append({
-                        "Ticker": ticker,
-                        "Preço": round(preco, 2),
-                        "Z-Score": round(zscore, 2),
-                        "Status": status,
-                        "Stoch K": round(stoch_k, 2),
-                        "Dist EMA69 %": round(dist_ema, 2)
-                    })
-
-            except:
-                pass
-
-        barra.progress((i + 1) / total)
-
-    # =====================================================
-    # RESULTADOS
-    # =====================================================
-
-    if len(resultados) > 0:
-
-        df_resultado = pd.DataFrame(resultados)
-
-        prioridade = {
-            "🔥 SINAL NOVO": 0,
-            "Alta Mantida": 1
-        }
-
-        df_resultado["Prioridade"] = df_resultado["Status"].map(prioridade)
-
-        df_resultado = df_resultado.sort_values(
-            by=["Prioridade", "Z-Score"],
-            ascending=[True, True]
-        )
-
-        df_resultado = df_resultado.drop(columns=["Prioridade"])
-
-        st.success(f"{len(df_resultado)} ativos encontrados.")
-
-        st.dataframe(
-            df_resultado,
-            use_container_width=True,
-            height=700
-        )
-
-        # =================================================
-        # GRÁFICO
-        # =================================================
-
-        fig = px.scatter(
-            df_resultado,
-            x="Z-Score",
-            y="Dist EMA69 %",
-            color="Status",
-            hover_data=["Ticker"],
-            title="Mapa Probabilístico"
-        )
-
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
-
-    else:
-
-        st.warning(
-            "Nenhum ativo encontrado no setup Buy Side."
-        )
+    st.warning("Nenhum ativo encontrado")
