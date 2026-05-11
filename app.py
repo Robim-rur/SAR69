@@ -1,8 +1,4 @@
-# =========================================================
-# SAR69 PROBABILÍSTICO PROFISSIONAL
-# Compatível com Streamlit Cloud Python 3.14
-# SEM pandas-ta
-# =========================================================
+# app.py
 
 import streamlit as st
 import pandas as pd
@@ -11,44 +7,26 @@ import yfinance as yf
 import plotly.express as px
 from datetime import datetime
 
-# =========================================================
-# CONFIG
-# =========================================================
-
 st.set_page_config(
-    page_title="SAR69 PRO",
+    page_title="Scanner Probabilístico ATR",
     layout="wide"
 )
 
+# =========================
+# SENHA
+# =========================
+
 SENHA = "LUCRO6"
 
-# =========================================================
-# LOGIN
-# =========================================================
+senha = st.sidebar.text_input("Senha", type="password")
 
-if "logado" not in st.session_state:
-    st.session_state.logado = False
-
-if not st.session_state.logado:
-
-    st.title("🔒 SAR69 PRO")
-
-    senha = st.text_input("Senha", type="password")
-
-    if st.button("Entrar"):
-
-        if senha == SENHA:
-            st.session_state.logado = True
-            st.rerun()
-
-        else:
-            st.error("Senha incorreta")
-
+if senha != SENHA:
+    st.warning("Digite a senha correta.")
     st.stop()
 
-# =========================================================
-# LISTA OFICIAL DE ATIVOS
-# =========================================================
+# =========================
+# LISTA DE ATIVOS
+# =========================
 
 ATIVOS = [
 
@@ -86,273 +64,281 @@ ATIVOS = [
     # BDRs
     "AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA","META34.SA",
     "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
-
 ]
 
-# =========================================================
-# INDICADORES
-# =========================================================
+# =========================
+# FUNÇÕES
+# =========================
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
 def stochastic(df, k_period=14, d_period=3):
 
-    low_min = df["Low"].rolling(k_period).min()
-    high_max = df["High"].rolling(k_period).max()
+    low_min = df['Low'].rolling(k_period).min()
+    high_max = df['High'].rolling(k_period).max()
 
-    k = 100 * ((df["Close"] - low_min) / (high_max - low_min))
+    k = 100 * ((df['Close'] - low_min) / (high_max - low_min))
     d = k.rolling(d_period).mean()
 
     return k, d
 
+def atr(df, period=14):
+
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+
+    true_range = ranges.max(axis=1)
+
+    return true_range.rolling(period).mean()
+
 def dmi(df, period=14):
 
-    high = df["High"]
-    low = df["Low"]
-    close = df["Close"]
-
-    plus_dm = high.diff()
-    minus_dm = low.diff() * -1
+    plus_dm = df['High'].diff()
+    minus_dm = df['Low'].diff() * -1
 
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm < 0] = 0
 
-    tr1 = high - low
-    tr2 = abs(high - close.shift())
-    tr3 = abs(low - close.shift())
+    tr1 = df['High'] - df['Low']
+    tr2 = abs(df['High'] - df['Close'].shift())
+    tr3 = abs(df['Low'] - df['Close'].shift())
 
-    tr = pd.concat([tr1, tr2], axis=1).max(axis=1)
-    tr = pd.concat([tr, tr3], axis=1).max(axis=1)
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    atr = tr.rolling(period).mean()
+    atr_ = tr.rolling(period).mean()
 
-    plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
-    minus_di = 100 * (minus_dm.rolling(period).mean() / atr)
+    plus_di = 100 * (plus_dm.rolling(period).mean() / atr_)
+    minus_di = 100 * (minus_dm.rolling(period).mean() / atr_)
 
-    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100
+    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
     adx = dx.rolling(period).mean()
 
-    return plus_di, minus_di, adx, atr
+    return plus_di, minus_di, adx
 
-# =========================================================
-# SCORE
-# =========================================================
+# =========================
+# TÍTULO
+# =========================
 
-def calcular_score(df):
+st.title("Scanner Probabilístico ATR")
+st.write("Ranking probabilístico baseado no seu setup operacional.")
 
-    score = 0
+# =========================
+# BOTÃO
+# =========================
 
-    close = df["Close"].iloc[-1]
-    ema69 = df["EMA69"].iloc[-1]
+if st.button("ESCANEAR MERCADO"):
 
-    # tendência principal
-    if close > ema69:
-        score += 30
+    resultados = []
 
-    # força compradora
-    if df["DI+"].iloc[-1] > df["DI-"].iloc[-1]:
-        score += 25
+    progresso = st.progress(0)
 
-    # tendência forte
-    if df["ADX"].iloc[-1] > 20:
-        score += 15
+    for i, ativo in enumerate(ATIVOS):
 
-    # momentum
-    if df["%K"].iloc[-1] > df["%D"].iloc[-1]:
-        score += 10
+        try:
 
-    # volume
-    vol_media = df["Volume"].rolling(20).mean().iloc[-1]
+            df = yf.download(
+                ativo,
+                period="3y",
+                interval="1d",
+                auto_adjust=True,
+                progress=False
+            )
 
-    if df["Volume"].iloc[-1] > vol_media:
-        score += 10
+            if len(df) < 200:
+                continue
 
-    # candle positivo
-    if df["Close"].iloc[-1] > df["Open"].iloc[-1]:
-        score += 10
+            df.dropna(inplace=True)
 
-    return score
+            # =====================
+            # INDICADORES
+            # =====================
 
-# =========================================================
-# CLASSIFICAÇÃO
-# =========================================================
+            df["EMA69"] = ema(df["Close"], 69)
 
-def classificar(score):
+            k, d = stochastic(df)
 
-    if score >= 90:
-        return "EXTREMA"
+            df["K"] = k
+            df["D"] = d
 
-    elif score >= 80:
-        return "MUITO ALTA"
+            plus_di, minus_di, adx = dmi(df)
 
-    elif score >= 70:
-        return "ALTA"
+            df["PLUS_DI"] = plus_di
+            df["MINUS_DI"] = minus_di
+            df["ADX"] = adx
 
-    elif score >= 60:
-        return "MÉDIA"
+            df["ATR"] = atr(df)
 
-    return "BAIXA"
+            df.dropna(inplace=True)
 
-def probabilidade(score):
+            if len(df) < 50:
+                continue
 
-    if score >= 90:
-        return 90
+            ultimo = df.iloc[-1]
 
-    elif score >= 80:
-        return 82
+            close = float(ultimo["Close"])
+            ema69 = float(ultimo["EMA69"])
+            k_val = float(ultimo["K"])
+            d_val = float(ultimo["D"])
+            plus = float(ultimo["PLUS_DI"])
+            minus = float(ultimo["MINUS_DI"])
+            adx_val = float(ultimo["ADX"])
+            atr_val = float(ultimo["ATR"])
 
-    elif score >= 70:
-        return 74
+            # =====================
+            # FILTROS
+            # =====================
 
-    elif score >= 60:
-        return 66
+            tendencia = close > ema69
 
-    return 55
+            estocastico_ok = (
+                k_val > d_val
+                and k_val < 80
+            )
 
-# =========================================================
-# ATR POR CLASSE
-# =========================================================
+            dmi_ok = plus > minus
 
-def atr_parametros(ativo):
+            adx_ok = adx_val >= 14
 
-    if "11.SA" in ativo:
-        return 1.2, 1.0
+            distancia_ema = abs((close - ema69) / ema69) * 100
 
-    elif "34.SA" in ativo:
-        return 2.5, 1.0
+            distancia_ok = distancia_ema <= 15
 
-    else:
-        return 2.0, 1.0
+            candle_forca = (
+                ultimo["Close"] > ultimo["Open"]
+            )
 
-# =========================================================
-# APP
-# =========================================================
+            if not tendencia:
+                continue
 
-st.title("📈 SAR69 PROBABILÍSTICO")
+            if not estocastico_ok:
+                continue
 
-st.markdown("Scanner diário com ranking probabilístico")
+            if not dmi_ok:
+                continue
 
-periodo = st.selectbox(
-    "Histórico",
-    ["1y", "2y", "5y", "10y"],
-    index=2
-)
+            if not adx_ok:
+                continue
 
-resultados = []
+            if not distancia_ok:
+                continue
 
-barra = st.progress(0)
+            if not candle_forca:
+                continue
 
-for i, ativo in enumerate(ATIVOS):
+            # =====================
+            # ATR
+            # =====================
 
-    try:
+            gain = close + (atr_val * 2)
+            stop = close - (atr_val * 1)
 
-        df = yf.download(
-            ativo,
-            period=periodo,
-            interval="1d",
-            auto_adjust=True,
-            progress=False
-        )
+            gain_pct = ((gain / close) - 1) * 100
+            stop_pct = ((stop / close) - 1) * 100
 
-        if len(df) < 120:
-            continue
+            # =====================
+            # SCORE
+            # =====================
 
-        df["EMA69"] = ema(df["Close"], 69)
+            score = 0
 
-        k, d = stochastic(df)
+            if close > ema69:
+                score += 20
 
-        df["%K"] = k
-        df["%D"] = d
+            if plus > minus:
+                score += 20
 
-        plus_di, minus_di, adx, atr = dmi(df)
+            if adx_val > 20:
+                score += 15
 
-        df["DI+"] = plus_di
-        df["DI-"] = minus_di
-        df["ADX"] = adx
-        df["ATR"] = atr
+            if k_val > d_val:
+                score += 15
 
-        ultimo = df.iloc[-1]
+            if distancia_ema < 8:
+                score += 10
 
-        # filtros obrigatórios
+            if candle_forca:
+                score += 10
 
-        tendencia = ultimo["Close"] > ultimo["EMA69"]
-        dmi_ok = ultimo["DI+"] > ultimo["DI-"]
+            if gain_pct > abs(stop_pct):
+                score += 10
 
-        if tendencia and dmi_ok:
+            # =====================
+            # PROBABILIDADE
+            # =====================
 
-            gain_mult, stop_mult = atr_parametros(ativo)
+            prob_gain = min(95, max(45, score))
 
-            entrada = ultimo["Close"]
-            atr_valor = ultimo["ATR"]
+            # =====================
+            # FILTRO FINAL
+            # =====================
 
-            stop = entrada - (atr_valor * stop_mult)
-            gain = entrada + (atr_valor * gain_mult)
-
-            risco_pct = ((entrada - stop) / entrada) * 100
-            gain_pct = ((gain - entrada) / entrada) * 100
-
-            score = calcular_score(df)
-
-            classe = classificar(score)
-
-            prob = probabilidade(score)
+            if score < 55:
+                continue
 
             resultados.append({
 
                 "Ativo": ativo.replace(".SA", ""),
-                "Preço": round(entrada, 2),
-                "ATR": round(atr_valor, 2),
-                "Stop": round(stop, 2),
-                "Gain": round(gain, 2),
-                "Risco %": round(risco_pct, 2),
-                "Gain %": round(gain_pct, 2),
-                "ADX": round(ultimo["ADX"], 2),
-                "Score": score,
-                "Classificação": classe,
-                "Probabilidade Gain %": prob
+                "Preço": round(close, 2),
+                "Probabilidade Gain (%)": round(prob_gain, 1),
+                "Score": round(score, 1),
+                "ADX": round(adx_val, 1),
+                "ATR": round(atr_val, 2),
+                "Gain ATR (%)": round(gain_pct, 2),
+                "Stop ATR (%)": round(stop_pct, 2),
+                "Dist EMA69 (%)": round(distancia_ema, 2)
 
             })
 
-    except:
-        pass
+        except:
+            pass
 
-    progresso = int((i + 1) / len(ATIVOS) * 100)
+        progresso.progress((i + 1) / len(ATIVOS))
 
-    barra.progress(progresso)
+    # =========================
+    # RESULTADOS
+    # =========================
 
-# =========================================================
-# RESULTADOS
-# =========================================================
+    if len(resultados) == 0:
 
-if resultados:
+        st.error("Nenhum ativo encontrado.")
 
-    resultado_df = pd.DataFrame(resultados)
+    else:
 
-    resultado_df = resultado_df.sort_values(
-        by="Probabilidade Gain %",
-        ascending=False
-    )
+        resultado_df = pd.DataFrame(resultados)
 
-    st.success(f"{len(resultado_df)} ativos encontrados")
+        resultado_df = resultado_df.sort_values(
+            by="Probabilidade Gain (%)",
+            ascending=False
+        )
 
-    st.dataframe(
-        resultado_df,
-        use_container_width=True,
-        height=700
-    )
+        st.success(f"{len(resultado_df)} ativos encontrados.")
 
-    fig = px.bar(
-        resultado_df.head(15),
-        x="Ativo",
-        y="Probabilidade Gain %"
-    )
+        st.dataframe(
+            resultado_df,
+            use_container_width=True
+        )
 
-    st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
+        fig = px.bar(
+            resultado_df.head(15),
+            x="Ativo",
+            y="Probabilidade Gain (%)",
+            title="Top Probabilidades"
+        )
 
-else:
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
-    st.warning("Nenhum ativo encontrado")
+        csv = resultado_df.to_csv(index=False).encode("utf-8")
+
+        st.download_button(
+            "Baixar CSV",
+            csv,
+            file_name=f"scanner_{datetime.now().date()}.csv",
+            mime="text/csv"
+        )
