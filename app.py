@@ -7,6 +7,10 @@ import yfinance as yf
 import plotly.express as px
 from datetime import datetime
 
+# =========================================================
+# CONFIG
+# =========================================================
+
 st.set_page_config(
     page_title="Scanner SAR + EMA50 + Probabilidade",
     layout="wide"
@@ -55,66 +59,40 @@ ATIVOS = [
 ]
 
 # =========================================================
-# FUNÇÕES
+# INDICADORES
 # =========================================================
 
 def calcular_ema(df, periodo=50):
     return df["Close"].ewm(span=periodo).mean()
 
-def calcular_sar(df, af=0.02, af_max=0.2):
-    high = df["High"].values
-    low = df["Low"].values
-
-    sar = np.zeros(len(df))
-    trend = 1
-    ep = low[0]
-    af_value = af
-
-    sar[0] = low[0]
-
-    for i in range(1, len(df)):
-
-        sar[i] = sar[i - 1] + af_value * (ep - sar[i - 1])
-
-        if trend == 1:
-
-            if low[i] < sar[i]:
-                trend = -1
-                sar[i] = ep
-                ep = low[i]
-                af_value = af
-
-            else:
-                if high[i] > ep:
-                    ep = high[i]
-                    af_value = min(af_value + af, af_max)
-
-        else:
-
-            if high[i] > sar[i]:
-                trend = 1
-                sar[i] = ep
-                ep = high[i]
-                af_value = af
-
-            else:
-                if low[i] < ep:
-                    ep = low[i]
-                    af_value = min(af_value + af, af_max)
-
-    return sar
-
 def calcular_atr(df, periodo=14):
 
     high_low = df["High"] - df["Low"]
-    high_close = np.abs(df["High"] - df["Close"].shift())
-    low_close = np.abs(df["Low"] - df["Close"].shift())
+    high_close = abs(df["High"] - df["Close"].shift())
+    low_close = abs(df["Low"] - df["Close"].shift())
 
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    tr = pd.concat(
+        [high_low, high_close, low_close],
+        axis=1
+    ).max(axis=1)
 
     atr = tr.rolling(periodo).mean()
 
     return atr
+
+def calcular_estocastico(df, periodo=14):
+
+    low_min = df["Low"].rolling(periodo).min()
+    high_max = df["High"].rolling(periodo).max()
+
+    k = 100 * (
+        (df["Close"] - low_min)
+        / (high_max - low_min)
+    )
+
+    d = k.rolling(3).mean()
+
+    return k, d
 
 def calcular_adx(df, periodo=14):
 
@@ -132,24 +110,83 @@ def calcular_adx(df, periodo=14):
 
     atr = tr.rolling(periodo).mean()
 
-    plus_di = 100 * (plus_dm.rolling(periodo).mean() / atr)
-    minus_di = 100 * (minus_dm.rolling(periodo).mean() / atr)
+    plus_di = 100 * (
+        plus_dm.rolling(periodo).mean() / atr
+    )
 
-    dx = (abs(plus_di - minus_di) / abs(plus_di + minus_di)) * 100
+    minus_di = 100 * (
+        minus_dm.rolling(periodo).mean() / atr
+    )
+
+    dx = (
+        abs(plus_di - minus_di)
+        / abs(plus_di + minus_di)
+    ) * 100
 
     adx = dx.rolling(periodo).mean()
 
     return adx, plus_di, minus_di
 
-def calcular_estocastico(df, periodo=14):
+def calcular_sar(df, af=0.02, af_max=0.2):
 
-    low_min = df["Low"].rolling(periodo).min()
-    high_max = df["High"].rolling(periodo).max()
+    high = df["High"].values
+    low = df["Low"].values
 
-    k = 100 * ((df["Close"] - low_min) / (high_max - low_min))
-    d = k.rolling(3).mean()
+    sar = np.zeros(len(df))
 
-    return k, d
+    trend = 1
+
+    ep = low[0]
+
+    acceleration = af
+
+    sar[0] = low[0]
+
+    for i in range(1, len(df)):
+
+        sar[i] = sar[i-1] + acceleration * (ep - sar[i-1])
+
+        if trend == 1:
+
+            if low[i] < sar[i]:
+
+                trend = -1
+                sar[i] = ep
+                ep = low[i]
+                acceleration = af
+
+            else:
+
+                if high[i] > ep:
+
+                    ep = high[i]
+
+                    acceleration = min(
+                        acceleration + af,
+                        af_max
+                    )
+
+        else:
+
+            if high[i] > sar[i]:
+
+                trend = 1
+                sar[i] = ep
+                ep = high[i]
+                acceleration = af
+
+            else:
+
+                if low[i] < ep:
+
+                    ep = low[i]
+
+                    acceleration = min(
+                        acceleration + af,
+                        af_max
+                    )
+
+    return sar
 
 # =========================================================
 # TÍTULO
@@ -160,14 +197,14 @@ st.title("📈 Scanner SAR + EMA50 + Probabilidade")
 st.markdown("""
 Scanner probabilístico para swing trade diário.
 
-Critérios:
+### Critérios principais:
 - EMA 50
 - SAR
-- ADX
-- DI+/DI-
+- DMI
+- ADX como score
 - Estocástico
-- Volume
 - ATR para Gain/Loss
+- Ranking probabilístico
 """)
 
 # =========================================================
@@ -197,11 +234,15 @@ if st.button("ESCANEAR MERCADO"):
 
             df.dropna(inplace=True)
 
+            # =================================================
+            # INDICADORES
+            # =================================================
+
             df["EMA50"] = calcular_ema(df, 50)
 
-            df["SAR"] = calcular_sar(df)
-
             df["ATR"] = calcular_atr(df)
+
+            df["SAR"] = calcular_sar(df)
 
             df["ADX"], df["DI+"], df["DI-"] = calcular_adx(df)
 
@@ -210,121 +251,156 @@ if st.button("ESCANEAR MERCADO"):
             df["VOL20"] = df["Volume"].rolling(20).mean()
 
             ultimo = df.iloc[-1]
-            anterior = df.iloc[-2]
+
+            # =================================================
+            # DADOS
+            # =================================================
 
             close = float(ultimo["Close"])
             ema50 = float(ultimo["EMA50"])
             sar = float(ultimo["SAR"])
 
             adx = float(ultimo["ADX"])
+
             di_plus = float(ultimo["DI+"])
             di_minus = float(ultimo["DI-"])
 
             k = float(ultimo["K"])
-            d = float(ultimo["D"])
 
             atr = float(ultimo["ATR"])
 
-            volume_ok = ultimo["Volume"] > ultimo["VOL20"]
+            volume_ok = (
+                ultimo["Volume"] > ultimo["VOL20"]
+            )
 
-            candle_verde = ultimo["Close"] > ultimo["Open"]
+            candle_verde = (
+                ultimo["Close"] > ultimo["Open"]
+            )
 
-            # =====================================================
-            # FILTROS MAIS FLEXÍVEIS
-            # =====================================================
+            # =================================================
+            # FILTROS FLEXÍVEIS
+            # =================================================
 
             tendencia = close > ema50
 
             sar_ok = sar < close
 
-            adx_ok = adx > 17
-
             dmi_ok = di_plus > di_minus
-
-            estocastico_ok = (k > d) or (k > anterior["K"])
 
             if (
                 tendencia
                 and sar_ok
-                and adx_ok
                 and dmi_ok
-                and estocastico_ok
             ):
 
-                stop_atr = close - (atr * 1)
-                gain_atr = close + (atr * 2)
+                # =============================================
+                # ATR STOP E GAIN
+                # =============================================
 
-                distancia_gain = ((gain_atr / close) - 1) * 100
-                distancia_stop = ((close / stop_atr) - 1) * 100
+                atr_stop = close - (atr * 1)
+
+                atr_gain = close + (atr * 2)
+
+                gain_pct = (
+                    (atr_gain / close) - 1
+                ) * 100
+
+                loss_pct = (
+                    (close / atr_stop) - 1
+                ) * 100
+
+                # =============================================
+                # SCORE
+                # =============================================
 
                 score = 0
 
                 # tendência
                 if close > ema50:
-                    score += 20
+                    score += 25
 
                 # SAR
                 if sar < close:
-                    score += 20
-
-                # força
-                score += min(adx, 40)
+                    score += 25
 
                 # DMI
                 if di_plus > di_minus:
+                    score += 20
+
+                # ADX
+                score += min(adx, 25)
+
+                # Estocástico
+                if k > 40:
                     score += 15
 
-                # estocástico
-                if k > d:
-                    score += 15
-
-                # candle
+                # candle verde
                 if candle_verde:
-                    score += 10
+                    score += 5
 
                 # volume
                 if volume_ok:
-                    score += 10
+                    score += 5
 
-                probabilidade = min(round(score, 1), 99)
+                probabilidade = min(
+                    round(score, 1),
+                    99
+                )
 
                 resultados.append({
+
                     "Ativo": ativo.replace(".SA", ""),
+
                     "Preço": round(close, 2),
+
+                    "Probabilidade": probabilidade,
+
                     "ADX": round(adx, 1),
+
                     "DI+": round(di_plus, 1),
+
                     "DI-": round(di_minus, 1),
-                    "Estocástico K": round(k, 1),
-                    "Probabilidade Gain": probabilidade,
-                    "ATR Stop": round(stop_atr, 2),
-                    "ATR Gain": round(gain_atr, 2),
-                    "Gain %": round(distancia_gain, 2),
-                    "Loss %": round(distancia_stop, 2),
+
+                    "Estocástico": round(k, 1),
+
+                    "ATR Gain": round(atr_gain, 2),
+
+                    "ATR Stop": round(atr_stop, 2),
+
+                    "Gain %": round(gain_pct, 2),
+
+                    "Loss %": round(loss_pct, 2)
                 })
 
         except:
             pass
 
-        progresso.progress((idx + 1) / len(ATIVOS))
+        progresso.progress(
+            (idx + 1) / len(ATIVOS)
+        )
 
     # =========================================================
-    # RESULTADOS
+    # RESULTADO
     # =========================================================
 
     if len(resultados) == 0:
 
-        st.warning("Nenhum ativo encontrado.")
+        st.warning(
+            "Nenhum ativo encontrado hoje."
+        )
 
     else:
 
         resultado_df = pd.DataFrame(resultados)
 
         resultado_df = resultado_df.sort_values(
-            by="Probabilidade Gain",
+            by="Probabilidade",
             ascending=False
         )
 
-        st.success(f"{len(resultado_df)} ativos encontrados.")
+        st.success(
+            f"{len(resultado_df)} ativos encontrados."
+        )
 
         st.dataframe(
             resultado_df,
@@ -335,13 +411,18 @@ if st.button("ESCANEAR MERCADO"):
         fig = px.bar(
             resultado_df.head(15),
             x="Ativo",
-            y="Probabilidade Gain",
-            title="Top 15 Probabilidades"
+            y="Probabilidade",
+            title="Top Probabilidades"
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
 
-        csv = resultado_df.to_csv(index=False).encode("utf-8")
+        csv = resultado_df.to_csv(
+            index=False
+        ).encode("utf-8")
 
         st.download_button(
             "📥 Baixar CSV",
@@ -355,6 +436,7 @@ if st.button("ESCANEAR MERCADO"):
 # =========================================================
 
 st.markdown("---")
+
 st.caption(
     f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
 )
