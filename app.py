@@ -1,31 +1,30 @@
-# ============================================
-# APP SAR69 PROBABILÍSTICO COMPLETO
-# COMPATÍVEL COM STREAMLIT CLOUD PYTHON 3.14
-# SEM PANDAS-TA
-# ============================================
+# =========================================================
+# SAR69 PROBABILÍSTICO PROFISSIONAL
+# Compatível com Streamlit Cloud Python 3.14
+# SEM pandas-ta
+# =========================================================
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
 import plotly.express as px
-from scipy.stats import percentileofscore
 from datetime import datetime
 
-# ============================================
+# =========================================================
 # CONFIG
-# ============================================
+# =========================================================
 
 st.set_page_config(
-    page_title="SAR69 Probabilístico",
+    page_title="SAR69 PRO",
     layout="wide"
 )
 
 SENHA = "LUCRO6"
 
-# ============================================
+# =========================================================
 # LOGIN
-# ============================================
+# =========================================================
 
 if "logado" not in st.session_state:
     st.session_state.logado = False
@@ -47,9 +46,9 @@ if not st.session_state.logado:
 
     st.stop()
 
-# ============================================
-# LISTA COMPLETA DE ATIVOS
-# ============================================
+# =========================================================
+# LISTA OFICIAL DE ATIVOS
+# =========================================================
 
 ATIVOS = [
 
@@ -90,9 +89,9 @@ ATIVOS = [
 
 ]
 
-# ============================================
-# FUNÇÕES INDICADORES
-# ============================================
+# =========================================================
+# INDICADORES
+# =========================================================
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
@@ -123,21 +122,22 @@ def dmi(df, period=14):
     tr2 = abs(high - close.shift())
     tr3 = abs(low - close.shift())
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    tr = pd.concat([tr1, tr2], axis=1).max(axis=1)
+    tr = pd.concat([tr, tr3], axis=1).max(axis=1)
 
     atr = tr.rolling(period).mean()
 
     plus_di = 100 * (plus_dm.rolling(period).mean() / atr)
     minus_di = 100 * (minus_dm.rolling(period).mean() / atr)
 
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
+    dx = ((plus_di - minus_di).abs() / (plus_di + minus_di)) * 100
     adx = dx.rolling(period).mean()
 
     return plus_di, minus_di, adx, atr
 
-# ============================================
+# =========================================================
 # SCORE
-# ============================================
+# =========================================================
 
 def calcular_score(df):
 
@@ -146,60 +146,102 @@ def calcular_score(df):
     close = df["Close"].iloc[-1]
     ema69 = df["EMA69"].iloc[-1]
 
+    # tendência principal
     if close > ema69:
         score += 30
 
+    # força compradora
     if df["DI+"].iloc[-1] > df["DI-"].iloc[-1]:
         score += 25
 
+    # tendência forte
     if df["ADX"].iloc[-1] > 20:
         score += 15
 
+    # momentum
     if df["%K"].iloc[-1] > df["%D"].iloc[-1]:
-        score += 15
+        score += 10
 
-    if df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1]:
-        score += 15
+    # volume
+    vol_media = df["Volume"].rolling(20).mean().iloc[-1]
+
+    if df["Volume"].iloc[-1] > vol_media:
+        score += 10
+
+    # candle positivo
+    if df["Close"].iloc[-1] > df["Open"].iloc[-1]:
+        score += 10
 
     return score
 
-# ============================================
-# PROBABILIDADE
-# ============================================
+# =========================================================
+# CLASSIFICAÇÃO
+# =========================================================
 
-def probabilidade_gain(score):
+def classificar(score):
 
-    if score >= 85:
-        return 88
+    if score >= 90:
+        return "EXTREMA"
 
-    elif score >= 75:
-        return 80
+    elif score >= 80:
+        return "MUITO ALTA"
 
-    elif score >= 65:
-        return 72
+    elif score >= 70:
+        return "ALTA"
 
-    elif score >= 55:
-        return 64
+    elif score >= 60:
+        return "MÉDIA"
 
-    return 50
+    return "BAIXA"
 
-# ============================================
+def probabilidade(score):
+
+    if score >= 90:
+        return 90
+
+    elif score >= 80:
+        return 82
+
+    elif score >= 70:
+        return 74
+
+    elif score >= 60:
+        return 66
+
+    return 55
+
+# =========================================================
+# ATR POR CLASSE
+# =========================================================
+
+def atr_parametros(ativo):
+
+    if "11.SA" in ativo:
+        return 1.2, 1.0
+
+    elif "34.SA" in ativo:
+        return 2.5, 1.0
+
+    else:
+        return 2.0, 1.0
+
+# =========================================================
 # APP
-# ============================================
+# =========================================================
 
 st.title("📈 SAR69 PROBABILÍSTICO")
 
-st.markdown("Scanner diário com confirmação semanal")
+st.markdown("Scanner diário com ranking probabilístico")
 
 periodo = st.selectbox(
-    "Período Histórico",
+    "Histórico",
     ["1y", "2y", "5y", "10y"],
     index=2
 )
 
 resultados = []
 
-progress = st.progress(0)
+barra = st.progress(0)
 
 for i, ativo in enumerate(ATIVOS):
 
@@ -213,7 +255,7 @@ for i, ativo in enumerate(ATIVOS):
             progress=False
         )
 
-        if len(df) < 100:
+        if len(df) < 120:
             continue
 
         df["EMA69"] = ema(df["Close"], 69)
@@ -232,44 +274,42 @@ for i, ativo in enumerate(ATIVOS):
 
         ultimo = df.iloc[-1]
 
-        # ====================================
-        # FILTROS PRINCIPAIS
-        # ====================================
+        # filtros obrigatórios
 
         tendencia = ultimo["Close"] > ultimo["EMA69"]
-
         dmi_ok = ultimo["DI+"] > ultimo["DI-"]
 
-        stoch_ok = ultimo["%K"] > ultimo["%D"]
+        if tendencia and dmi_ok:
 
-        if tendencia and dmi_ok and stoch_ok:
-
-            atr_valor = ultimo["ATR"]
+            gain_mult, stop_mult = atr_parametros(ativo)
 
             entrada = ultimo["Close"]
+            atr_valor = ultimo["ATR"]
 
-            stop = entrada - (1.0 * atr_valor)
+            stop = entrada - (atr_valor * stop_mult)
+            gain = entrada + (atr_valor * gain_mult)
 
-            gain = entrada + (2.0 * atr_valor)
-
-            risco = ((entrada - stop) / entrada) * 100
-            retorno = ((gain - entrada) / entrada) * 100
+            risco_pct = ((entrada - stop) / entrada) * 100
+            gain_pct = ((gain - entrada) / entrada) * 100
 
             score = calcular_score(df)
 
-            prob = probabilidade_gain(score)
+            classe = classificar(score)
+
+            prob = probabilidade(score)
 
             resultados.append({
 
                 "Ativo": ativo.replace(".SA", ""),
                 "Preço": round(entrada, 2),
                 "ATR": round(atr_valor, 2),
-                "Stop ATR": round(stop, 2),
-                "Gain ATR": round(gain, 2),
-                "Risco %": round(risco, 2),
-                "Gain %": round(retorno, 2),
+                "Stop": round(stop, 2),
+                "Gain": round(gain, 2),
+                "Risco %": round(risco_pct, 2),
+                "Gain %": round(gain_pct, 2),
                 "ADX": round(ultimo["ADX"], 2),
                 "Score": score,
+                "Classificação": classe,
                 "Probabilidade Gain %": prob
 
             })
@@ -278,11 +318,12 @@ for i, ativo in enumerate(ATIVOS):
         pass
 
     progresso = int((i + 1) / len(ATIVOS) * 100)
-    progress.progress(progresso)
 
-# ============================================
+    barra.progress(progresso)
+
+# =========================================================
 # RESULTADOS
-# ============================================
+# =========================================================
 
 if resultados:
 
@@ -301,12 +342,16 @@ if resultados:
         height=700
     )
 
-    fig = px.histogram(
-        resultado_df,
-        x="Probabilidade Gain %"
+    fig = px.bar(
+        resultado_df.head(15),
+        x="Ativo",
+        y="Probabilidade Gain %"
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
 
 else:
 
