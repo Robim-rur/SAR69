@@ -61,7 +61,7 @@ def main():
         "SANB11.SA","BRSR6.SA","PETR3.SA","SUZB3.SA","KLBN11.SA","JBSS3.SA",
         "RECV3.SA","RAIL3.SA","AAPL34.SA","MSFT34.SA","GOGL34.SA","AMZO34.SA",
         "META34.SA","NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA","BOVA11.SA",
-        "SMAL11.SA","IVVB11.SA","DIVO11.SA","GARE11.SA
+        "SMAL11.SA","IVVB11.SA","DIVO11.SA","GARE11.SA"
     ]
     
     lista_ativos = sorted(list(set(ativos_raw)))
