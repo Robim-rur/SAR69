@@ -8,25 +8,28 @@ import plotly.express as px
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Scanner Probabilístico ATR",
+    page_title="Scanner ATR Flex",
     layout="wide"
 )
 
-# =========================
+# ======================================
 # SENHA
-# =========================
+# ======================================
 
 SENHA = "LUCRO6"
 
-senha = st.sidebar.text_input("Senha", type="password")
+senha = st.sidebar.text_input(
+    "Senha",
+    type="password"
+)
 
 if senha != SENHA:
-    st.warning("Digite a senha correta.")
+    st.warning("Digite a senha.")
     st.stop()
 
-# =========================
+# ======================================
 # LISTA DE ATIVOS
-# =========================
+# ======================================
 
 ATIVOS = [
 
@@ -66,75 +69,100 @@ ATIVOS = [
     "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
 ]
 
-# =========================
+# ======================================
 # FUNÇÕES
-# =========================
+# ======================================
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
-def stochastic(df, k_period=14, d_period=3):
+def stochastic(df):
 
-    low_min = df['Low'].rolling(k_period).min()
-    high_max = df['High'].rolling(k_period).max()
+    low_min = df["Low"].rolling(14).min()
+    high_max = df["High"].rolling(14).max()
 
-    k = 100 * ((df['Close'] - low_min) / (high_max - low_min))
-    d = k.rolling(d_period).mean()
+    k = 100 * (
+        (df["Close"] - low_min) /
+        (high_max - low_min)
+    )
+
+    d = k.rolling(3).mean()
 
     return k, d
 
-def atr(df, period=14):
+def atr(df):
 
-    high_low = df['High'] - df['Low']
-    high_close = np.abs(df['High'] - df['Close'].shift())
-    low_close = np.abs(df['Low'] - df['Close'].shift())
+    high_low = df["High"] - df["Low"]
+    high_close = abs(df["High"] - df["Close"].shift())
+    low_close = abs(df["Low"] - df["Close"].shift())
 
-    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    tr = pd.concat(
+        [high_low, high_close, low_close],
+        axis=1
+    ).max(axis=1)
 
-    true_range = ranges.max(axis=1)
+    return tr.rolling(14).mean()
 
-    return true_range.rolling(period).mean()
+def dmi(df):
 
-def dmi(df, period=14):
-
-    plus_dm = df['High'].diff()
-    minus_dm = df['Low'].diff() * -1
+    plus_dm = df["High"].diff()
+    minus_dm = -df["Low"].diff()
 
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm < 0] = 0
 
-    tr1 = df['High'] - df['Low']
-    tr2 = abs(df['High'] - df['Close'].shift())
-    tr3 = abs(df['Low'] - df['Close'].shift())
+    tr1 = df["High"] - df["Low"]
+    tr2 = abs(df["High"] - df["Close"].shift())
+    tr3 = abs(df["Low"] - df["Close"].shift())
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    tr = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
 
-    atr_ = tr.rolling(period).mean()
+    atr_ = tr.rolling(14).mean()
 
-    plus_di = 100 * (plus_dm.rolling(period).mean() / atr_)
-    minus_di = 100 * (minus_dm.rolling(period).mean() / atr_)
+    plus_di = 100 * (
+        plus_dm.rolling(14).mean() / atr_
+    )
 
-    dx = (abs(plus_di - minus_di) / (plus_di + minus_di)) * 100
-    adx = dx.rolling(period).mean()
+    minus_di = 100 * (
+        minus_dm.rolling(14).mean() / atr_
+    )
+
+    dx = (
+        abs(plus_di - minus_di) /
+        (plus_di + minus_di)
+    ) * 100
+
+    adx = dx.rolling(14).mean()
 
     return plus_di, minus_di, adx
 
-# =========================
+# ======================================
 # TÍTULO
-# =========================
+# ======================================
 
-st.title("Scanner Probabilístico ATR")
-st.write("Ranking probabilístico baseado no seu setup operacional.")
+st.title("Scanner ATR Flexível")
 
-# =========================
+st.write("""
+Scanner alinhado ao seu operacional:
+- EMA69
+- DI+ > DI−
+- Candle comprador
+- Ranking probabilístico
+- Gain/Stop por ATR
+""")
+
+# ======================================
 # BOTÃO
-# =========================
+# ======================================
 
-if st.button("ESCANEAR MERCADO"):
+if st.button("ESCANEAR"):
 
     resultados = []
 
-    progresso = st.progress(0)
+    barra = st.progress(0)
 
     for i, ativo in enumerate(ATIVOS):
 
@@ -142,20 +170,14 @@ if st.button("ESCANEAR MERCADO"):
 
             df = yf.download(
                 ativo,
-                period="3y",
+                period="2y",
                 interval="1d",
                 auto_adjust=True,
                 progress=False
             )
 
-            if len(df) < 200:
+            if len(df) < 100:
                 continue
-
-            df.dropna(inplace=True)
-
-            # =====================
-            # INDICADORES
-            # =====================
 
             df["EMA69"] = ema(df["Close"], 69)
 
@@ -174,133 +196,95 @@ if st.button("ESCANEAR MERCADO"):
 
             df.dropna(inplace=True)
 
-            if len(df) < 50:
-                continue
-
             ultimo = df.iloc[-1]
 
             close = float(ultimo["Close"])
             ema69 = float(ultimo["EMA69"])
-            k_val = float(ultimo["K"])
-            d_val = float(ultimo["D"])
+
             plus = float(ultimo["PLUS_DI"])
             minus = float(ultimo["MINUS_DI"])
+
             adx_val = float(ultimo["ADX"])
+
+            k_val = float(ultimo["K"])
+            d_val = float(ultimo["D"])
+
             atr_val = float(ultimo["ATR"])
 
-            # =====================
-            # FILTROS
-            # =====================
+            # ======================================
+            # FILTROS OBRIGATÓRIOS
+            # ======================================
 
-            tendencia = close > ema69
-
-            estocastico_ok = (
-                k_val > d_val
-                and k_val < 80
-            )
-
-            dmi_ok = plus > minus
-
-            adx_ok = adx_val >= 14
-
-            distancia_ema = abs((close - ema69) / ema69) * 100
-
-            distancia_ok = distancia_ema <= 15
-
-            candle_forca = (
-                ultimo["Close"] > ultimo["Open"]
-            )
-
-            if not tendencia:
+            if close <= ema69:
                 continue
 
-            if not estocastico_ok:
+            if plus <= minus:
                 continue
 
-            if not dmi_ok:
+            if ultimo["Close"] <= ultimo["Open"]:
                 continue
 
-            if not adx_ok:
-                continue
+            # ======================================
+            # SCORE FLEXÍVEL
+            # ======================================
 
-            if not distancia_ok:
-                continue
-
-            if not candle_forca:
-                continue
-
-            # =====================
-            # ATR
-            # =====================
-
-            gain = close + (atr_val * 2)
-            stop = close - (atr_val * 1)
-
-            gain_pct = ((gain / close) - 1) * 100
-            stop_pct = ((stop / close) - 1) * 100
-
-            # =====================
-            # SCORE
-            # =====================
-
-            score = 0
-
-            if close > ema69:
-                score += 20
-
-            if plus > minus:
-                score += 20
+            score = 50
 
             if adx_val > 20:
-                score += 15
+                score += 10
 
             if k_val > d_val:
-                score += 15
+                score += 10
+
+            distancia_ema = (
+                abs(close - ema69) / ema69
+            ) * 100
 
             if distancia_ema < 8:
                 score += 10
 
-            if candle_forca:
+            if volume := ultimo.get("Volume", 0):
                 score += 10
 
-            if gain_pct > abs(stop_pct):
-                score += 10
+            probabilidade = min(score, 95)
 
-            # =====================
-            # PROBABILIDADE
-            # =====================
+            # ======================================
+            # ATR
+            # ======================================
 
-            prob_gain = min(95, max(45, score))
+            gain = close + (atr_val * 2)
+            stop = close - (atr_val * 1)
 
-            # =====================
-            # FILTRO FINAL
-            # =====================
+            gain_pct = (
+                (gain / close) - 1
+            ) * 100
 
-            if score < 55:
-                continue
+            stop_pct = (
+                (stop / close) - 1
+            ) * 100
 
             resultados.append({
 
                 "Ativo": ativo.replace(".SA", ""),
                 "Preço": round(close, 2),
-                "Probabilidade Gain (%)": round(prob_gain, 1),
+                "Probabilidade": round(probabilidade, 1),
                 "Score": round(score, 1),
                 "ADX": round(adx_val, 1),
                 "ATR": round(atr_val, 2),
-                "Gain ATR (%)": round(gain_pct, 2),
-                "Stop ATR (%)": round(stop_pct, 2),
-                "Dist EMA69 (%)": round(distancia_ema, 2)
+                "Gain ATR %": round(gain_pct, 2),
+                "Stop ATR %": round(stop_pct, 2),
+                "Dist EMA69 %": round(distancia_ema, 2)
 
             })
 
         except:
             pass
 
-        progresso.progress((i + 1) / len(ATIVOS))
+        barra.progress((i + 1) / len(ATIVOS))
 
-    # =========================
+    # ======================================
     # RESULTADOS
-    # =========================
+    # ======================================
 
     if len(resultados) == 0:
 
@@ -311,11 +295,13 @@ if st.button("ESCANEAR MERCADO"):
         resultado_df = pd.DataFrame(resultados)
 
         resultado_df = resultado_df.sort_values(
-            by="Probabilidade Gain (%)",
+            by="Probabilidade",
             ascending=False
         )
 
-        st.success(f"{len(resultado_df)} ativos encontrados.")
+        st.success(
+            f"{len(resultado_df)} ativos encontrados."
+        )
 
         st.dataframe(
             resultado_df,
@@ -325,8 +311,8 @@ if st.button("ESCANEAR MERCADO"):
         fig = px.bar(
             resultado_df.head(15),
             x="Ativo",
-            y="Probabilidade Gain (%)",
-            title="Top Probabilidades"
+            y="Probabilidade",
+            title="Melhores Probabilidades"
         )
 
         st.plotly_chart(
@@ -334,11 +320,11 @@ if st.button("ESCANEAR MERCADO"):
             use_container_width=True
         )
 
-        csv = resultado_df.to_csv(index=False).encode("utf-8")
+        csv = resultado_df.to_csv(index=False)
 
         st.download_button(
             "Baixar CSV",
             csv,
-            file_name=f"scanner_{datetime.now().date()}.csv",
+            file_name="scanner.csv",
             mime="text/csv"
         )
