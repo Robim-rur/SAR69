@@ -8,28 +8,13 @@ import plotly.express as px
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Scanner SAR + EMA69",
+    page_title="Scanner SAR + EMA50 + Probabilidade",
     layout="wide"
 )
 
-# =====================================
-# SENHA
-# =====================================
-
-SENHA = "LUCRO6"
-
-senha = st.sidebar.text_input(
-    "Senha",
-    type="password"
-)
-
-if senha != SENHA:
-    st.warning("Digite a senha.")
-    st.stop()
-
-# =====================================
-# LISTA DE ATIVOS
-# =====================================
+# =========================================================
+# LISTA COMPLETA DE ATIVOS
+# =========================================================
 
 ATIVOS = [
 
@@ -37,7 +22,7 @@ ATIVOS = [
     "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
     "BPAC11.SA","BRSR6.SA",
 
-    # Energia
+    # Energia / Elétricas
     "TAEE11.SA","TRPL4.SA","CMIG4.SA","CPLE6.SA","CPFE3.SA","EQTL3.SA",
     "ALUP11.SA","NEOE3.SA","ENGI11.SA","EGIE3.SA","CSMG3.SA","SBSP3.SA",
     "SAPR11.SA","SAPR4.SA",
@@ -46,7 +31,7 @@ ATIVOS = [
     "PETR4.SA","PETR3.SA","PRIO3.SA","VALE3.SA","SUZB3.SA","KLBN11.SA",
     "RECV3.SA",
 
-    # Consumo
+    # Consumo / Serviços
     "WEGE3.SA","TOTS3.SA","VIVT3.SA","TIMS3.SA","ABEV3.SA","PSSA3.SA",
     "MULT3.SA","ALOS3.SA","ODPV3.SA","CYRE3.SA","KEPL3.SA","POMO4.SA",
     "RAIL3.SA","RDOR3.SA","JBSS3.SA",
@@ -69,30 +54,72 @@ ATIVOS = [
     "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
 ]
 
-# =====================================
+# =========================================================
 # FUNÇÕES
-# =====================================
+# =========================================================
 
-def ema(series, period):
-    return series.ewm(span=period, adjust=False).mean()
+def calcular_ema(df, periodo=50):
+    return df["Close"].ewm(span=periodo).mean()
 
-def atr(df):
+def calcular_sar(df, af=0.02, af_max=0.2):
+    high = df["High"].values
+    low = df["Low"].values
 
-    tr1 = df["High"] - df["Low"]
-    tr2 = abs(df["High"] - df["Close"].shift())
-    tr3 = abs(df["Low"] - df["Close"].shift())
+    sar = np.zeros(len(df))
+    trend = 1
+    ep = low[0]
+    af_value = af
 
-    tr = pd.concat(
-        [tr1, tr2, tr3],
-        axis=1
-    ).max(axis=1)
+    sar[0] = low[0]
 
-    return tr.rolling(14).mean()
+    for i in range(1, len(df)):
 
-def dmi(df):
+        sar[i] = sar[i - 1] + af_value * (ep - sar[i - 1])
+
+        if trend == 1:
+
+            if low[i] < sar[i]:
+                trend = -1
+                sar[i] = ep
+                ep = low[i]
+                af_value = af
+
+            else:
+                if high[i] > ep:
+                    ep = high[i]
+                    af_value = min(af_value + af, af_max)
+
+        else:
+
+            if high[i] > sar[i]:
+                trend = 1
+                sar[i] = ep
+                ep = high[i]
+                af_value = af
+
+            else:
+                if low[i] < ep:
+                    ep = low[i]
+                    af_value = min(af_value + af, af_max)
+
+    return sar
+
+def calcular_atr(df, periodo=14):
+
+    high_low = df["High"] - df["Low"]
+    high_close = np.abs(df["High"] - df["Close"].shift())
+    low_close = np.abs(df["Low"] - df["Close"].shift())
+
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+
+    atr = tr.rolling(periodo).mean()
+
+    return atr
+
+def calcular_adx(df, periodo=14):
 
     plus_dm = df["High"].diff()
-    minus_dm = -df["Low"].diff()
+    minus_dm = df["Low"].diff() * -1
 
     plus_dm[plus_dm < 0] = 0
     minus_dm[minus_dm < 0] = 0
@@ -101,117 +128,65 @@ def dmi(df):
     tr2 = abs(df["High"] - df["Close"].shift())
     tr3 = abs(df["Low"] - df["Close"].shift())
 
-    tr = pd.concat(
-        [tr1, tr2, tr3],
-        axis=1
-    ).max(axis=1)
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    atr_ = tr.rolling(14).mean()
+    atr = tr.rolling(periodo).mean()
 
-    plus_di = 100 * (
-        plus_dm.rolling(14).mean() / atr_
-    )
+    plus_di = 100 * (plus_dm.rolling(periodo).mean() / atr)
+    minus_di = 100 * (minus_dm.rolling(periodo).mean() / atr)
 
-    minus_di = 100 * (
-        minus_dm.rolling(14).mean() / atr_
-    )
+    dx = (abs(plus_di - minus_di) / abs(plus_di + minus_di)) * 100
 
-    return plus_di, minus_di
+    adx = dx.rolling(periodo).mean()
 
-def psar(df, af=0.02, max_af=0.2):
+    return adx, plus_di, minus_di
 
-    high = df["High"].values
-    low = df["Low"].values
+def calcular_estocastico(df, periodo=14):
 
-    length = len(df)
+    low_min = df["Low"].rolling(periodo).min()
+    high_max = df["High"].rolling(periodo).max()
 
-    psar = np.zeros(length)
+    k = 100 * ((df["Close"] - low_min) / (high_max - low_min))
+    d = k.rolling(3).mean()
 
-    bull = True
+    return k, d
 
-    af_value = af
-
-    ep = low[0]
-
-    psar[0] = low[0]
-
-    for i in range(1, length):
-
-        prev_psar = psar[i - 1]
-
-        if bull:
-
-            psar[i] = prev_psar + af_value * (ep - prev_psar)
-
-            if low[i] < psar[i]:
-                bull = False
-                psar[i] = ep
-                ep = low[i]
-                af_value = af
-
-            else:
-
-                if high[i] > ep:
-                    ep = high[i]
-                    af_value = min(
-                        af_value + af,
-                        max_af
-                    )
-
-        else:
-
-            psar[i] = prev_psar + af_value * (ep - prev_psar)
-
-            if high[i] > psar[i]:
-                bull = True
-                psar[i] = ep
-                ep = high[i]
-                af_value = af
-
-            else:
-
-                if low[i] < ep:
-                    ep = low[i]
-                    af_value = min(
-                        af_value + af,
-                        max_af
-                    )
-
-    return psar
-
-# =====================================
+# =========================================================
 # TÍTULO
-# =====================================
+# =========================================================
 
-st.title("Scanner SAR + EMA69")
+st.title("📈 Scanner SAR + EMA50 + Probabilidade")
 
-st.write("""
-Scanner baseado em:
-- EMA69
-- DMI
+st.markdown("""
+Scanner probabilístico para swing trade diário.
+
+Critérios:
+- EMA 50
 - SAR
-- ATR
-- Tendência
-- Candle comprador
+- ADX
+- DI+/DI-
+- Estocástico
+- Volume
+- ATR para Gain/Loss
 """)
 
-# =====================================
+# =========================================================
 # BOTÃO
-# =====================================
+# =========================================================
 
 if st.button("ESCANEAR MERCADO"):
 
     resultados = []
 
-    barra = st.progress(0)
+    progresso = st.progress(0)
 
-    for i, ativo in enumerate(ATIVOS):
+    for idx, ativo in enumerate(ATIVOS):
 
         try:
 
             df = yf.download(
                 ativo,
-                period="2y",
+                period="1y",
                 interval="1d",
                 auto_adjust=True,
                 progress=False
@@ -220,144 +195,166 @@ if st.button("ESCANEAR MERCADO"):
             if len(df) < 100:
                 continue
 
-            df["EMA69"] = ema(df["Close"], 69)
-
-            plus_di, minus_di = dmi(df)
-
-            df["PLUS_DI"] = plus_di
-            df["MINUS_DI"] = minus_di
-
-            df["ATR"] = atr(df)
-
-            df["PSAR"] = psar(df)
-
             df.dropna(inplace=True)
 
+            df["EMA50"] = calcular_ema(df, 50)
+
+            df["SAR"] = calcular_sar(df)
+
+            df["ATR"] = calcular_atr(df)
+
+            df["ADX"], df["DI+"], df["DI-"] = calcular_adx(df)
+
+            df["K"], df["D"] = calcular_estocastico(df)
+
+            df["VOL20"] = df["Volume"].rolling(20).mean()
+
             ultimo = df.iloc[-1]
+            anterior = df.iloc[-2]
 
             close = float(ultimo["Close"])
-            ema69 = float(ultimo["EMA69"])
+            ema50 = float(ultimo["EMA50"])
+            sar = float(ultimo["SAR"])
 
-            plus = float(ultimo["PLUS_DI"])
-            minus = float(ultimo["MINUS_DI"])
+            adx = float(ultimo["ADX"])
+            di_plus = float(ultimo["DI+"])
+            di_minus = float(ultimo["DI-"])
 
-            atr_val = float(ultimo["ATR"])
+            k = float(ultimo["K"])
+            d = float(ultimo["D"])
 
-            sar = float(ultimo["PSAR"])
+            atr = float(ultimo["ATR"])
 
-            # =====================================
-            # FILTROS PRINCIPAIS
-            # =====================================
+            volume_ok = ultimo["Volume"] > ultimo["VOL20"]
 
-            if close <= ema69:
-                continue
+            candle_verde = ultimo["Close"] > ultimo["Open"]
 
-            if plus <= minus:
-                continue
+            # =====================================================
+            # FILTROS MAIS FLEXÍVEIS
+            # =====================================================
 
-            if close <= sar:
-                continue
+            tendencia = close > ema50
 
-            if ultimo["Close"] <= ultimo["Open"]:
-                continue
+            sar_ok = sar < close
 
-            # =====================================
-            # SCORE
-            # =====================================
+            adx_ok = adx > 17
 
-            score = 60
+            dmi_ok = di_plus > di_minus
 
-            distancia_ema = (
-                abs(close - ema69) / ema69
-            ) * 100
+            estocastico_ok = (k > d) or (k > anterior["K"])
 
-            if distancia_ema < 8:
-                score += 10
+            if (
+                tendencia
+                and sar_ok
+                and adx_ok
+                and dmi_ok
+                and estocastico_ok
+            ):
 
-            if close > sar:
-                score += 15
+                stop_atr = close - (atr * 1)
+                gain_atr = close + (atr * 2)
 
-            if plus > minus:
-                score += 15
+                distancia_gain = ((gain_atr / close) - 1) * 100
+                distancia_stop = ((close / stop_atr) - 1) * 100
 
-            probabilidade = min(score, 95)
+                score = 0
 
-            # =====================================
-            # ATR
-            # =====================================
+                # tendência
+                if close > ema50:
+                    score += 20
 
-            gain = close + (atr_val * 2)
-            stop = close - atr_val
+                # SAR
+                if sar < close:
+                    score += 20
 
-            gain_pct = (
-                (gain / close) - 1
-            ) * 100
+                # força
+                score += min(adx, 40)
 
-            stop_pct = (
-                (stop / close) - 1
-            ) * 100
+                # DMI
+                if di_plus > di_minus:
+                    score += 15
 
-            resultados.append({
+                # estocástico
+                if k > d:
+                    score += 15
 
-                "Ativo": ativo.replace(".SA", ""),
-                "Preço": round(close, 2),
-                "Probabilidade": round(probabilidade, 1),
-                "SAR": round(sar, 2),
-                "ATR": round(atr_val, 2),
-                "Gain ATR %": round(gain_pct, 2),
-                "Stop ATR %": round(stop_pct, 2),
-                "Dist EMA69 %": round(distancia_ema, 2)
+                # candle
+                if candle_verde:
+                    score += 10
 
-            })
+                # volume
+                if volume_ok:
+                    score += 10
+
+                probabilidade = min(round(score, 1), 99)
+
+                resultados.append({
+                    "Ativo": ativo.replace(".SA", ""),
+                    "Preço": round(close, 2),
+                    "ADX": round(adx, 1),
+                    "DI+": round(di_plus, 1),
+                    "DI-": round(di_minus, 1),
+                    "Estocástico K": round(k, 1),
+                    "Probabilidade Gain": probabilidade,
+                    "ATR Stop": round(stop_atr, 2),
+                    "ATR Gain": round(gain_atr, 2),
+                    "Gain %": round(distancia_gain, 2),
+                    "Loss %": round(distancia_stop, 2),
+                })
 
         except:
             pass
 
-        barra.progress((i + 1) / len(ATIVOS))
+        progresso.progress((idx + 1) / len(ATIVOS))
 
-    # =====================================
+    # =========================================================
     # RESULTADOS
-    # =====================================
+    # =========================================================
 
     if len(resultados) == 0:
 
-        st.error("Nenhum ativo encontrado.")
+        st.warning("Nenhum ativo encontrado.")
 
     else:
 
         resultado_df = pd.DataFrame(resultados)
 
         resultado_df = resultado_df.sort_values(
-            by="Probabilidade",
+            by="Probabilidade Gain",
             ascending=False
         )
 
-        st.success(
-            f"{len(resultado_df)} ativos encontrados."
-        )
+        st.success(f"{len(resultado_df)} ativos encontrados.")
 
         st.dataframe(
             resultado_df,
-            use_container_width=True
+            use_container_width=True,
+            hide_index=True
         )
 
         fig = px.bar(
             resultado_df.head(15),
             x="Ativo",
-            y="Probabilidade",
-            title="Melhores Probabilidades"
+            y="Probabilidade Gain",
+            title="Top 15 Probabilidades"
         )
 
-        st.plotly_chart(
-            fig,
-            use_container_width=True
-        )
+        st.plotly_chart(fig, use_container_width=True)
 
-        csv = resultado_df.to_csv(index=False)
+        csv = resultado_df.to_csv(index=False).encode("utf-8")
 
         st.download_button(
-            "Baixar CSV",
+            "📥 Baixar CSV",
             csv,
-            file_name="scanner_sar.csv",
-            mime="text/csv"
+            "scanner_probabilidade.csv",
+            "text/csv"
         )
+
+# =========================================================
+# RODAPÉ
+# =========================================================
+
+st.markdown("---")
+st.caption(
+    f"Atualizado em {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"
+)
