@@ -12,12 +12,12 @@ from datetime import datetime
 # =========================================================
 
 st.set_page_config(
-    page_title="Scanner SAR + EMA50 + Probabilidade",
+    page_title="Scanner EMA50 + SAR + Probabilidade",
     layout="wide"
 )
 
 # =========================================================
-# LISTA COMPLETA DE ATIVOS
+# LISTA DE ATIVOS
 # =========================================================
 
 ATIVOS = [
@@ -59,7 +59,7 @@ ATIVOS = [
 ]
 
 # =========================================================
-# INDICADORES
+# FUNÇÕES
 # =========================================================
 
 def calcular_ema(df, periodo=50):
@@ -68,8 +68,14 @@ def calcular_ema(df, periodo=50):
 def calcular_atr(df, periodo=14):
 
     high_low = df["High"] - df["Low"]
-    high_close = abs(df["High"] - df["Close"].shift())
-    low_close = abs(df["Low"] - df["Close"].shift())
+
+    high_close = abs(
+        df["High"] - df["Close"].shift()
+    )
+
+    low_close = abs(
+        df["Low"] - df["Close"].shift()
+    )
 
     tr = pd.concat(
         [high_low, high_close, low_close],
@@ -83,6 +89,7 @@ def calcular_atr(df, periodo=14):
 def calcular_estocastico(df, periodo=14):
 
     low_min = df["Low"].rolling(periodo).min()
+
     high_max = df["High"].rolling(periodo).max()
 
     k = 100 * (
@@ -90,23 +97,28 @@ def calcular_estocastico(df, periodo=14):
         / (high_max - low_min)
     )
 
-    d = k.rolling(3).mean()
-
-    return k, d
+    return k
 
 def calcular_adx(df, periodo=14):
 
     plus_dm = df["High"].diff()
+
     minus_dm = df["Low"].diff() * -1
 
     plus_dm[plus_dm < 0] = 0
+
     minus_dm[minus_dm < 0] = 0
 
     tr1 = df["High"] - df["Low"]
+
     tr2 = abs(df["High"] - df["Close"].shift())
+
     tr3 = abs(df["Low"] - df["Close"].shift())
 
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    tr = pd.concat(
+        [tr1, tr2, tr3],
+        axis=1
+    ).max(axis=1)
 
     atr = tr.rolling(periodo).mean()
 
@@ -144,7 +156,10 @@ def calcular_sar(df, af=0.02, af_max=0.2):
 
     for i in range(1, len(df)):
 
-        sar[i] = sar[i-1] + acceleration * (ep - sar[i-1])
+        sar[i] = (
+            sar[i-1]
+            + acceleration * (ep - sar[i-1])
+        )
 
         if trend == 1:
 
@@ -192,19 +207,25 @@ def calcular_sar(df, af=0.02, af_max=0.2):
 # TÍTULO
 # =========================================================
 
-st.title("📈 Scanner SAR + EMA50 + Probabilidade")
+st.title("📈 Scanner EMA50 + SAR + Probabilidade")
 
 st.markdown("""
-Scanner probabilístico para swing trade diário.
+Scanner probabilístico flexível para swing trade diário.
 
-### Critérios principais:
-- EMA 50
+### Regras obrigatórias:
+- SOMENTE preço acima da EMA50
+
+### Score:
 - SAR
 - DMI
-- ADX como score
+- ADX
 - Estocástico
-- ATR para Gain/Loss
-- Ranking probabilístico
+- Candle
+- Volume
+
+### ATR:
+- Gain = 2 ATR
+- Stop = 1 ATR
 """)
 
 # =========================================================
@@ -238,7 +259,7 @@ if st.button("ESCANEAR MERCADO"):
             # INDICADORES
             # =================================================
 
-            df["EMA50"] = calcular_ema(df, 50)
+            df["EMA50"] = calcular_ema(df)
 
             df["ATR"] = calcular_atr(df)
 
@@ -246,7 +267,7 @@ if st.button("ESCANEAR MERCADO"):
 
             df["ADX"], df["DI+"], df["DI-"] = calcular_adx(df)
 
-            df["K"], df["D"] = calcular_estocastico(df)
+            df["K"] = calcular_estocastico(df)
 
             df["VOL20"] = df["Volume"].rolling(20).mean()
 
@@ -257,49 +278,42 @@ if st.button("ESCANEAR MERCADO"):
             # =================================================
 
             close = float(ultimo["Close"])
+
             ema50 = float(ultimo["EMA50"])
+
             sar = float(ultimo["SAR"])
 
             adx = float(ultimo["ADX"])
 
             di_plus = float(ultimo["DI+"])
+
             di_minus = float(ultimo["DI-"])
 
             k = float(ultimo["K"])
 
             atr = float(ultimo["ATR"])
 
-            volume_ok = (
-                ultimo["Volume"] > ultimo["VOL20"]
-            )
-
             candle_verde = (
                 ultimo["Close"] > ultimo["Open"]
             )
 
+            volume_ok = (
+                ultimo["Volume"] > ultimo["VOL20"]
+            )
+
             # =================================================
-            # FILTROS FLEXÍVEIS
+            # ÚNICO FILTRO OBRIGATÓRIO
             # =================================================
 
-            tendencia = close > ema50
-
-            sar_ok = sar < close
-
-            dmi_ok = di_plus > di_minus
-
-            if (
-                tendencia
-                and sar_ok
-                and dmi_ok
-            ):
+            if close > ema50:
 
                 # =============================================
-                # ATR STOP E GAIN
+                # ATR
                 # =============================================
-
-                atr_stop = close - (atr * 1)
 
                 atr_gain = close + (atr * 2)
+
+                atr_stop = close - (atr * 1)
 
                 gain_pct = (
                     (atr_gain / close) - 1
@@ -313,32 +327,28 @@ if st.button("ESCANEAR MERCADO"):
                 # SCORE
                 # =============================================
 
-                score = 0
-
-                # tendência
-                if close > ema50:
-                    score += 25
+                score = 50
 
                 # SAR
                 if sar < close:
-                    score += 25
+                    score += 10
 
                 # DMI
                 if di_plus > di_minus:
-                    score += 20
+                    score += 10
 
                 # ADX
-                score += min(adx, 25)
+                score += min(adx / 2, 10)
 
                 # Estocástico
                 if k > 40:
-                    score += 15
+                    score += 10
 
-                # candle verde
+                # Candle verde
                 if candle_verde:
                     score += 5
 
-                # volume
+                # Volume
                 if volume_ok:
                     score += 5
 
@@ -380,14 +390,12 @@ if st.button("ESCANEAR MERCADO"):
         )
 
     # =========================================================
-    # RESULTADO
+    # RESULTADOS
     # =========================================================
 
     if len(resultados) == 0:
 
-        st.warning(
-            "Nenhum ativo encontrado hoje."
-        )
+        st.warning("Nenhum ativo encontrado.")
 
     else:
 
