@@ -1,60 +1,56 @@
 import streamlit as st
-import pandas as pd
 import yfinance as yf
+import pandas as pd
 import time
 
-st.set_page_config(layout="wide")
+st.set_page_config(page_title="Teste Yahoo", layout="wide")
 
-st.title("TESTE REAL YFINANCE")
+st.title("Teste Simples Yahoo Finance")
 
 ATIVOS = [
     "PETR4.SA",
     "VALE3.SA",
-    "BBAS3.SA",
-    "ITUB4.SA",
-    "WEGE3.SA"
+    "BBAS3.SA"
 ]
 
-resultados = []
+resultado = []
 
 inicio = time.time()
 
 for ativo in ATIVOS:
 
-    st.write(f"Baixando {ativo}...")
+    st.write(f"Testando {ativo}")
 
     try:
 
         ticker = yf.Ticker(ativo)
 
-        df = ticker.history(
-            period="1y",
-            interval="1d",
-            auto_adjust=True
-        )
+        hist = ticker.history(period="3mo")
 
-        if df.empty:
+        if hist.empty:
 
-            resultados.append({
+            resultado.append({
                 "Ativo": ativo,
-                "Status": "SEM DADOS",
+                "Status": "Sem dados",
                 "Linhas": 0
             })
 
         else:
 
-            resultados.append({
+            ultimo = float(hist["Close"].iloc[-1])
+
+            resultado.append({
                 "Ativo": ativo,
                 "Status": "OK",
-                "Linhas": len(df),
-                "Último Fechamento": round(df["Close"].iloc[-1], 2)
+                "Linhas": len(hist),
+                "Último Fechamento": round(ultimo, 2)
             })
 
-            st.write(df.tail(3))
+            st.write(hist.tail())
 
     except Exception as e:
 
-        resultados.append({
+        resultado.append({
             "Ativo": ativo,
             "Status": str(e),
             "Linhas": 0
@@ -64,10 +60,10 @@ fim = time.time()
 
 tempo = round(fim - inicio, 2)
 
-st.subheader("Resultado")
+st.subheader("Resultado Final")
 
 st.dataframe(
-    pd.DataFrame(resultados),
+    pd.DataFrame(resultado),
     use_container_width=True
 )
 
