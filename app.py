@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from datetime import datetime
+import time
 
 st.set_page_config(layout="wide")
 
-st.title("TESTE DEFINITIVO YFINANCE")
+st.title("TESTE REAL YFINANCE")
 
 ATIVOS = [
     "PETR4.SA",
@@ -17,7 +17,7 @@ ATIVOS = [
 
 resultados = []
 
-inicio = datetime.now()
+inicio = time.time()
 
 for ativo in ATIVOS:
 
@@ -25,20 +25,19 @@ for ativo in ATIVOS:
 
     try:
 
-        df = yf.download(
-            ativo,
+        ticker = yf.Ticker(ativo)
+
+        df = ticker.history(
             period="1y",
             interval="1d",
-            progress=False,
-            auto_adjust=True,
-            threads=False
+            auto_adjust=True
         )
 
         if df.empty:
 
             resultados.append({
                 "Ativo": ativo,
-                "Status": "DATAFRAME VAZIO",
+                "Status": "SEM DADOS",
                 "Linhas": 0
             })
 
@@ -47,10 +46,11 @@ for ativo in ATIVOS:
             resultados.append({
                 "Ativo": ativo,
                 "Status": "OK",
-                "Linhas": len(df)
+                "Linhas": len(df),
+                "Último Fechamento": round(df["Close"].iloc[-1], 2)
             })
 
-            st.write(df.tail())
+            st.write(df.tail(3))
 
     except Exception as e:
 
@@ -60,12 +60,15 @@ for ativo in ATIVOS:
             "Linhas": 0
         })
 
-fim = datetime.now()
+fim = time.time()
 
-tempo = (fim - inicio).seconds
+tempo = round(fim - inicio, 2)
 
 st.subheader("Resultado")
 
-st.dataframe(pd.DataFrame(resultados), use_container_width=True)
+st.dataframe(
+    pd.DataFrame(resultados),
+    use_container_width=True
+)
 
 st.success(f"Tempo total: {tempo} segundos")
