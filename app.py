@@ -8,13 +8,13 @@ import plotly.express as px
 from datetime import datetime
 
 st.set_page_config(
-    page_title="Scanner ATR Flex",
+    page_title="Scanner SAR + EMA69",
     layout="wide"
 )
 
-# ======================================
+# =====================================
 # SENHA
-# ======================================
+# =====================================
 
 SENHA = "LUCRO6"
 
@@ -27,9 +27,9 @@ if senha != SENHA:
     st.warning("Digite a senha.")
     st.stop()
 
-# ======================================
+# =====================================
 # LISTA DE ATIVOS
-# ======================================
+# =====================================
 
 ATIVOS = [
 
@@ -37,7 +37,7 @@ ATIVOS = [
     "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
     "BPAC11.SA","BRSR6.SA",
 
-    # Energia / Elétricas
+    # Energia
     "TAEE11.SA","TRPL4.SA","CMIG4.SA","CPLE6.SA","CPFE3.SA","EQTL3.SA",
     "ALUP11.SA","NEOE3.SA","ENGI11.SA","EGIE3.SA","CSMG3.SA","SBSP3.SA",
     "SAPR11.SA","SAPR4.SA",
@@ -46,7 +46,7 @@ ATIVOS = [
     "PETR4.SA","PETR3.SA","PRIO3.SA","VALE3.SA","SUZB3.SA","KLBN11.SA",
     "RECV3.SA",
 
-    # Consumo / Serviços
+    # Consumo
     "WEGE3.SA","TOTS3.SA","VIVT3.SA","TIMS3.SA","ABEV3.SA","PSSA3.SA",
     "MULT3.SA","ALOS3.SA","ODPV3.SA","CYRE3.SA","KEPL3.SA","POMO4.SA",
     "RAIL3.SA","RDOR3.SA","JBSS3.SA",
@@ -69,35 +69,21 @@ ATIVOS = [
     "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
 ]
 
-# ======================================
+# =====================================
 # FUNÇÕES
-# ======================================
+# =====================================
 
 def ema(series, period):
     return series.ewm(span=period, adjust=False).mean()
 
-def stochastic(df):
-
-    low_min = df["Low"].rolling(14).min()
-    high_max = df["High"].rolling(14).max()
-
-    k = 100 * (
-        (df["Close"] - low_min) /
-        (high_max - low_min)
-    )
-
-    d = k.rolling(3).mean()
-
-    return k, d
-
 def atr(df):
 
-    high_low = df["High"] - df["Low"]
-    high_close = abs(df["High"] - df["Close"].shift())
-    low_close = abs(df["Low"] - df["Close"].shift())
+    tr1 = df["High"] - df["Low"]
+    tr2 = abs(df["High"] - df["Close"].shift())
+    tr3 = abs(df["Low"] - df["Close"].shift())
 
     tr = pd.concat(
-        [high_low, high_close, low_close],
+        [tr1, tr2, tr3],
         axis=1
     ).max(axis=1)
 
@@ -130,35 +116,90 @@ def dmi(df):
         minus_dm.rolling(14).mean() / atr_
     )
 
-    dx = (
-        abs(plus_di - minus_di) /
-        (plus_di + minus_di)
-    ) * 100
+    return plus_di, minus_di
 
-    adx = dx.rolling(14).mean()
+def psar(df, af=0.02, max_af=0.2):
 
-    return plus_di, minus_di, adx
+    high = df["High"].values
+    low = df["Low"].values
 
-# ======================================
+    length = len(df)
+
+    psar = np.zeros(length)
+
+    bull = True
+
+    af_value = af
+
+    ep = low[0]
+
+    psar[0] = low[0]
+
+    for i in range(1, length):
+
+        prev_psar = psar[i - 1]
+
+        if bull:
+
+            psar[i] = prev_psar + af_value * (ep - prev_psar)
+
+            if low[i] < psar[i]:
+                bull = False
+                psar[i] = ep
+                ep = low[i]
+                af_value = af
+
+            else:
+
+                if high[i] > ep:
+                    ep = high[i]
+                    af_value = min(
+                        af_value + af,
+                        max_af
+                    )
+
+        else:
+
+            psar[i] = prev_psar + af_value * (ep - prev_psar)
+
+            if high[i] > psar[i]:
+                bull = True
+                psar[i] = ep
+                ep = high[i]
+                af_value = af
+
+            else:
+
+                if low[i] < ep:
+                    ep = low[i]
+                    af_value = min(
+                        af_value + af,
+                        max_af
+                    )
+
+    return psar
+
+# =====================================
 # TÍTULO
-# ======================================
+# =====================================
 
-st.title("Scanner ATR Flexível")
+st.title("Scanner SAR + EMA69")
 
 st.write("""
-Scanner alinhado ao seu operacional:
+Scanner baseado em:
 - EMA69
-- DI+ > DI−
+- DMI
+- SAR
+- ATR
+- Tendência
 - Candle comprador
-- Ranking probabilístico
-- Gain/Stop por ATR
 """)
 
-# ======================================
+# =====================================
 # BOTÃO
-# ======================================
+# =====================================
 
-if st.button("ESCANEAR"):
+if st.button("ESCANEAR MERCADO"):
 
     resultados = []
 
@@ -181,18 +222,14 @@ if st.button("ESCANEAR"):
 
             df["EMA69"] = ema(df["Close"], 69)
 
-            k, d = stochastic(df)
-
-            df["K"] = k
-            df["D"] = d
-
-            plus_di, minus_di, adx = dmi(df)
+            plus_di, minus_di = dmi(df)
 
             df["PLUS_DI"] = plus_di
             df["MINUS_DI"] = minus_di
-            df["ADX"] = adx
 
             df["ATR"] = atr(df)
+
+            df["PSAR"] = psar(df)
 
             df.dropna(inplace=True)
 
@@ -204,16 +241,13 @@ if st.button("ESCANEAR"):
             plus = float(ultimo["PLUS_DI"])
             minus = float(ultimo["MINUS_DI"])
 
-            adx_val = float(ultimo["ADX"])
-
-            k_val = float(ultimo["K"])
-            d_val = float(ultimo["D"])
-
             atr_val = float(ultimo["ATR"])
 
-            # ======================================
-            # FILTROS OBRIGATÓRIOS
-            # ======================================
+            sar = float(ultimo["PSAR"])
+
+            # =====================================
+            # FILTROS PRINCIPAIS
+            # =====================================
 
             if close <= ema69:
                 continue
@@ -221,20 +255,17 @@ if st.button("ESCANEAR"):
             if plus <= minus:
                 continue
 
+            if close <= sar:
+                continue
+
             if ultimo["Close"] <= ultimo["Open"]:
                 continue
 
-            # ======================================
-            # SCORE FLEXÍVEL
-            # ======================================
+            # =====================================
+            # SCORE
+            # =====================================
 
-            score = 50
-
-            if adx_val > 20:
-                score += 10
-
-            if k_val > d_val:
-                score += 10
+            score = 60
 
             distancia_ema = (
                 abs(close - ema69) / ema69
@@ -243,17 +274,20 @@ if st.button("ESCANEAR"):
             if distancia_ema < 8:
                 score += 10
 
-            if volume := ultimo.get("Volume", 0):
-                score += 10
+            if close > sar:
+                score += 15
+
+            if plus > minus:
+                score += 15
 
             probabilidade = min(score, 95)
 
-            # ======================================
+            # =====================================
             # ATR
-            # ======================================
+            # =====================================
 
             gain = close + (atr_val * 2)
-            stop = close - (atr_val * 1)
+            stop = close - atr_val
 
             gain_pct = (
                 (gain / close) - 1
@@ -268,8 +302,7 @@ if st.button("ESCANEAR"):
                 "Ativo": ativo.replace(".SA", ""),
                 "Preço": round(close, 2),
                 "Probabilidade": round(probabilidade, 1),
-                "Score": round(score, 1),
-                "ADX": round(adx_val, 1),
+                "SAR": round(sar, 2),
                 "ATR": round(atr_val, 2),
                 "Gain ATR %": round(gain_pct, 2),
                 "Stop ATR %": round(stop_pct, 2),
@@ -282,9 +315,9 @@ if st.button("ESCANEAR"):
 
         barra.progress((i + 1) / len(ATIVOS))
 
-    # ======================================
+    # =====================================
     # RESULTADOS
-    # ======================================
+    # =====================================
 
     if len(resultados) == 0:
 
@@ -325,6 +358,6 @@ if st.button("ESCANEAR"):
         st.download_button(
             "Baixar CSV",
             csv,
-            file_name="scanner.csv",
+            file_name="scanner_sar.csv",
             mime="text/csv"
         )
