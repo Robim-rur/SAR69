@@ -17,14 +17,18 @@ ATIVOS = [
     "WEGE3.SA"
 ]
 
-def valor_final(v):
-    if isinstance(v, pd.Series):
-        return float(v.iloc[-1])
+def limpar_serie(coluna):
+    """
+    Converte DataFrame/ndarray em Series 1D.
+    """
 
-    if isinstance(v, np.ndarray):
-        return float(v[-1])
+    if isinstance(coluna, pd.DataFrame):
+        coluna = coluna.squeeze()
 
-    return float(v)
+    if isinstance(coluna, np.ndarray):
+        coluna = pd.Series(coluna.flatten())
+
+    return pd.Series(coluna).astype(float)
 
 resultados = []
 
@@ -49,9 +53,9 @@ for i, ticker in enumerate(ATIVOS):
         if df.empty:
             continue
 
-        close = df["Close"].astype(float)
-        high = df["High"].astype(float)
-        low = df["Low"].astype(float)
+        close = limpar_serie(df["Close"])
+        high = limpar_serie(df["High"])
+        low = limpar_serie(df["Low"])
 
         ema50 = ta.trend.EMAIndicator(
             close=close,
@@ -65,9 +69,9 @@ for i, ticker in enumerate(ATIVOS):
             window=14
         ).average_true_range()
 
-        preco = valor_final(close)
-        ema = valor_final(ema50)
-        atr_final = valor_final(atr)
+        preco = float(close.iloc[-1])
+        ema = float(ema50.iloc[-1])
+        atr_final = float(atr.iloc[-1])
 
         if preco > ema:
 
