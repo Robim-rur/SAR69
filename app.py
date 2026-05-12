@@ -3,27 +3,35 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 import time
-from datetime import datetime
+
+# ==================================================
+# CONFIGURAÇÃO DA PÁGINA
+# ==================================================
 
 st.set_page_config(
     page_title="Scanner SAR + EMA50",
     layout="wide"
 )
 
-# =========================
+# ==================================================
 # SENHA
-# =========================
+# ==================================================
+
 SENHA = "LUCRO6"
 
-senha = st.sidebar.text_input("Senha", type="password")
+senha = st.sidebar.text_input(
+    "Senha",
+    type="password"
+)
 
 if senha != SENHA:
     st.warning("Digite a senha correta.")
     st.stop()
 
-# =========================
+# ==================================================
 # LISTA DE ATIVOS
-# =========================
+# ==================================================
+
 ATIVOS = [
 
     # Bancos
@@ -62,41 +70,66 @@ ATIVOS = [
     "NVDC34.SA","JPMC34.SA","DISB34.SA","SBUX34.SA"
 ]
 
-# =========================
+# ==================================================
 # FUNÇÕES
-# =========================
+# ==================================================
 
 def calcular_ema(df, periodo=50):
-    return df["Close"].ewm(span=periodo).mean()
+
+    return (
+        df["Close"]
+        .astype(float)
+        .ewm(span=periodo)
+        .mean()
+    )
 
 def calcular_atr(df, periodo=14):
 
-    high_low = df["High"] - df["Low"]
+    high = df["High"].astype(float)
+    low = df["Low"].astype(float)
+    close = df["Close"].astype(float)
 
-    high_close = np.abs(df["High"] - df["Close"].shift())
+    high_low = high - low
 
-    low_close = np.abs(df["Low"] - df["Close"].shift())
+    high_close = np.abs(
+        high - close.shift()
+    )
 
-    tr = pd.concat(
+    low_close = np.abs(
+        low - close.shift()
+    )
+
+    ranges = pd.concat(
         [high_low, high_close, low_close],
         axis=1
-    ).max(axis=1)
+    )
 
-    atr = tr.rolling(periodo).mean()
+    true_range = ranges.max(axis=1)
+
+    atr = true_range.rolling(periodo).mean()
 
     return atr
 
 def calcular_sar(df, step=0.02, max_step=0.2):
 
-    high = df["High"].values
-    low = df["Low"].values
+    high = (
+        df["High"]
+        .astype(float)
+        .to_numpy()
+        .flatten()
+    )
 
-    sar = np.zeros(len(df))
+    low = (
+        df["Low"]
+        .astype(float)
+        .to_numpy()
+        .flatten()
+    )
+
+    sar = np.zeros(len(df), dtype=float)
 
     trend = 1
-
     af = step
-
     ep = low[0]
 
     sar[0] = low[0]
@@ -107,16 +140,16 @@ def calcular_sar(df, step=0.02, max_step=0.2):
 
         if trend == 1:
 
-            sar[i] = prev_sar + af * (ep - prev_sar)
+            sar[i] = (
+                prev_sar
+                + af * (ep - prev_sar)
+            )
 
             if low[i] < sar[i]:
 
                 trend = -1
-
                 sar[i] = ep
-
                 ep = low[i]
-
                 af = step
 
             else:
@@ -125,20 +158,23 @@ def calcular_sar(df, step=0.02, max_step=0.2):
 
                     ep = high[i]
 
-                    af = min(af + step, max_step)
+                    af = min(
+                        af + step,
+                        max_step
+                    )
 
         else:
 
-            sar[i] = prev_sar + af * (ep - prev_sar)
+            sar[i] = (
+                prev_sar
+                + af * (ep - prev_sar)
+            )
 
             if high[i] > sar[i]:
 
                 trend = 1
-
                 sar[i] = ep
-
                 ep = high[i]
-
                 af = step
 
             else:
@@ -147,23 +183,16 @@ def calcular_sar(df, step=0.02, max_step=0.2):
 
                     ep = low[i]
 
-                    af = min(af + step, max_step)
+                    af = min(
+                        af + step,
+                        max_step
+                    )
 
     return sar
 
-def calcular_score(df):
+def calcular_score(close, ema50, sar, volume, vol_media):
 
     score = 0
-
-    close = df["Close"].iloc[-1]
-
-    ema50 = df["EMA50"].iloc[-1]
-
-    sar = df["SAR"].iloc[-1]
-
-    volume = df["Volume"].iloc[-1]
-
-    vol_media = df["Volume"].rolling(20).mean().iloc[-1]
 
     if close > ema50:
         score += 40
@@ -176,20 +205,24 @@ def calcular_score(df):
 
     return score
 
-# =========================
+# ==================================================
 # INTERFACE
-# =========================
+# ==================================================
 
 st.title("📈 Scanner SAR + EMA50 + ATR")
 
 st.write("""
-Scanner probabilístico focado em:
+Scanner probabilístico baseado em:
 
-- Tendência por EMA50
-- Gatilho por SAR
+- Tendência pela EMA50
+- Gatilho pelo SAR
 - Gain/Loss pelo ATR
-- Ranking por probabilidade
+- Ranking probabilístico
 """)
+
+# ==================================================
+# BOTÃO
+# ==================================================
 
 if st.button("ESCANEAR MERCADO"):
 
@@ -207,14 +240,16 @@ if st.button("ESCANEAR MERCADO"):
 
         try:
 
-            status.write(f"Baixando {ativo}...")
+            status.write(
+                f"Baixando {ativo}..."
+            )
 
             df = yf.download(
                 ativo,
                 period="1y",
                 interval="1d",
-                progress=False,
-                auto_adjust=True
+                auto_adjust=True,
+                progress=False
             )
 
             if df.empty:
@@ -223,104 +258,180 @@ if st.button("ESCANEAR MERCADO"):
             if len(df) < 60:
                 continue
 
+            df = df.dropna()
+
+            if len(df) < 60:
+                continue
+
+            # ==================================================
+            # INDICADORES
+            # ==================================================
+
             df["EMA50"] = calcular_ema(df)
 
             df["ATR"] = calcular_atr(df)
 
             df["SAR"] = calcular_sar(df)
 
-            close = float(df["Close"].iloc[-1])
+            # ==================================================
+            # ÚLTIMA LINHA
+            # ==================================================
 
-            ema50 = float(df["EMA50"].iloc[-1])
+            ultima = df.iloc[-1]
 
-            sar = float(df["SAR"].iloc[-1])
+            close = float(ultima["Close"])
 
-            atr = float(df["ATR"].iloc[-1])
+            ema50 = float(ultima["EMA50"])
 
-            volume = float(df["Volume"].iloc[-1])
+            sar = float(ultima["SAR"])
+
+            atr = float(ultima["ATR"])
+
+            volume = float(ultima["Volume"])
 
             vol_media = float(
-                df["Volume"].rolling(20).mean().iloc[-1]
+                df["Volume"]
+                .rolling(20)
+                .mean()
+                .iloc[-1]
             )
 
+            # ==================================================
             # FILTRO PRINCIPAL
-            if close > ema50 and close > sar:
+            # ==================================================
+
+            if (
+                close > ema50
+                and close > sar
+            ):
 
                 gain = close + (atr * 2)
 
-                loss = close - (atr * 1)
+                loss = close - atr
 
-                potencial_gain = (
-                    (gain - close) / close
+                gain_pct = (
+                    (gain - close)
+                    / close
                 ) * 100
 
-                potencial_loss = (
-                    (close - loss) / close
+                loss_pct = (
+                    (close - loss)
+                    / close
                 ) * 100
 
-                score = calcular_score(df)
+                score = calcular_score(
+                    close,
+                    ema50,
+                    sar,
+                    volume,
+                    vol_media
+                )
 
                 resultados.append({
 
-                    "Ativo": ativo,
+                    "Ativo":
+                        ativo,
 
-                    "Preço": round(close, 2),
+                    "Preço":
+                        round(close, 2),
 
-                    "EMA50": round(ema50, 2),
+                    "EMA50":
+                        round(ema50, 2),
 
-                    "SAR": round(sar, 2),
+                    "SAR":
+                        round(sar, 2),
 
-                    "ATR": round(atr, 2),
+                    "ATR":
+                        round(atr, 2),
 
-                    "Gain ATR": round(gain, 2),
+                    "Gain ATR":
+                        round(gain, 2),
 
-                    "Loss ATR": round(loss, 2),
+                    "Loss ATR":
+                        round(loss, 2),
 
-                    "% Gain": round(potencial_gain, 2),
+                    "% Gain":
+                        round(gain_pct, 2),
 
-                    "% Loss": round(potencial_loss, 2),
+                    "% Loss":
+                        round(loss_pct, 2),
 
                     "Volume x Média":
-                        round(volume / vol_media, 2),
+                        round(
+                            volume / vol_media,
+                            2
+                        ),
 
-                    "Score": score
+                    "Score":
+                        score
                 })
 
         except Exception as e:
 
-            st.write(f"Erro em {ativo}: {e}")
+            st.write(
+                f"Erro em {ativo}: {e}"
+            )
 
-        progresso.progress((i + 1) / total)
+        progresso.progress(
+            (i + 1) / total
+        )
 
-    tempo_total = round(time.time() - inicio, 2)
+    tempo_total = round(
+        time.time() - inicio,
+        2
+    )
 
-    st.success(f"Scan concluído em {tempo_total} segundos.")
+    st.success(
+        f"Scan concluído em "
+        f"{tempo_total} segundos."
+    )
+
+    # ==================================================
+    # RESULTADOS
+    # ==================================================
 
     if len(resultados) == 0:
 
-        st.error("Nenhum ativo encontrado.")
+        st.error(
+            "Nenhum ativo encontrado."
+        )
 
     else:
 
-        resultado_df = pd.DataFrame(resultados)
-
-        resultado_df = resultado_df.sort_values(
-            by="Score",
-            ascending=False
+        resultado_df = pd.DataFrame(
+            resultados
         )
 
-        st.subheader("📊 Ranking Probabilístico")
+        resultado_df = (
+            resultado_df
+            .sort_values(
+                by="Score",
+                ascending=False
+            )
+        )
+
+        st.subheader(
+            "📊 Ranking Probabilístico"
+        )
 
         st.dataframe(
             resultado_df,
             use_container_width=True
         )
 
-        csv = resultado_df.to_csv(index=False)
+        csv = resultado_df.to_csv(
+            index=False
+        )
 
         st.download_button(
+
             "📥 Baixar CSV",
+
             csv,
-            file_name="scanner_resultado.csv",
+
+            file_name=(
+                "scanner_resultado.csv"
+            ),
+
             mime="text/csv"
         )
