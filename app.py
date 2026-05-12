@@ -1,20 +1,12 @@
-# =========================
-# APP SCANNER ROBUSTO B3
-# EMA50 + DMI + STOCH + ATR PROBABILÍSTICO
-# ADX COMO PESO (NÃO FILTRO)
-# =========================
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import ta
 import time
 
-# TA-LIB FREE
-import ta
-
 # =========================
-# LISTA COMPLETA
+# LISTA COMPLETA (ORIGINAL)
 # =========================
 TICKERS = [
 "BBAS3.SA","ITUB4.SA","ITSA4.SA","BBDC4.SA","BBDC3.SA","SANB11.SA",
@@ -39,75 +31,89 @@ TICKERS = [
 ]
 
 # =========================
-# FUNÇÃO SEGURA DE DOWNLOAD
+# DOWNLOAD ROBUSTO
 # =========================
 def get_data(ticker):
-    df = yf.download(ticker, period="6mo", interval="1d", auto_adjust=True, progress=False)
+    try:
+        df = yf.download(
+            ticker,
+            period="6mo",
+            interval="1d",
+            auto_adjust=True,
+            progress=False
+        )
 
-    if df is None or df.empty:
+        if df is None or df.empty:
+            return None
+
+        # flatten total (CRÍTICO)
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+
+        df = df.dropna()
+
+        for col in ["Open","High","Low","Close","Volume"]:
+            if col in df.columns:
+                df[col] = df[col].astype(float)
+
+        return df
+
+    except:
         return None
 
-    df = df.dropna()
-
-    # força Series 1D
-    for col in ["Open","High","Low","Close","Volume"]:
-        if col in df.columns:
-            df[col] = pd.Series(df[col].values).astype(float)
-
-    return df
 
 # =========================
-# INDICADORES
+# INDICADORES ESTÁVEIS
 # =========================
 def indicators(df):
 
-    close = df["Close"].astype(float).squeeze()
+    close = pd.Series(df["Close"].values)
+    high  = pd.Series(df["High"].values)
+    low   = pd.Series(df["Low"].values)
 
-    ema50 = ta.trend.ema_indicator(close, window=50).squeeze()
+    ema50 = ta.trend.ema_indicator(close, window=50)
 
-    adx = ta.trend.adx(df["High"], df["Low"], df["Close"], window=14).squeeze()
-    dmp = ta.trend.adx_pos(df["High"], df["Low"], df["Close"], window=14).squeeze()
-    dmn = ta.trend.adx_neg(df["High"], df["Low"], df["Close"], window=14).squeeze()
+    adx = ta.trend.adx(high, low, close, window=14)
+    dmp = ta.trend.adx_pos(high, low, close, window=14)
+    dmn = ta.trend.adx_neg(high, low, close, window=14)
 
-    stoch_k = ta.momentum.stoch(df["High"], df["Low"], df["Close"], window=14).squeeze()
-    stoch_d = ta.momentum.stoch_signal(df["High"], df["Low"], df["Close"], window=3).squeeze()
+    stoch_k = ta.momentum.stoch(high, low, close, window=14)
+    stoch_d = ta.momentum.stoch_signal(high, low, close, window=3)
 
-    atr = ta.volatility.average_true_range(df["High"], df["Low"], df["Close"], window=14).squeeze()
+    atr = ta.volatility.average_true_range(high, low, close, window=14)
 
     return ema50, adx, dmp, dmn, stoch_k, stoch_d, atr
 
+
 # =========================
-# PROBABILIDADE SIMPLIFICADA
+# PROBABILIDADE 2R (ATR)
 # =========================
-def probability_model(df, ema50, adx, dmp, dmn, stoch_k, stoch_d, atr):
+def probability(df, ema50, adx, dmp, dmn, k, d, atr):
 
-    last = -1
+    i = -1
+    price = df["Close"].iloc[i]
 
-    price = df["Close"].iloc[last]
+    trend = 1 if price > ema50.iloc[i] else 0
+    momentum = 1 if dmp.iloc[i] > dmn.iloc[i] else 0
+    stoch = 1 if k.iloc[i] > d.iloc[i] else 0
 
-    trend = 1 if price > ema50.iloc[last] else 0
-    strength = min(adx.iloc[last] / 40, 1)
+    strength = min(adx.iloc[i] / 40, 1)
 
-    momentum = 1 if dmp.iloc[last] > dmn.iloc[last] else 0
+    score = (trend * 0.4 + momentum * 0.3 + stoch * 0.2 + strength * 0.1)
 
-    stoch_ok = 1 if stoch_k.iloc[last] > stoch_d.iloc[last] else 0
+    atr_val = atr.iloc[i]
 
-    score = (trend * 0.4 + momentum * 0.3 + stoch_ok * 0.2 + strength * 0.1)
+    gain = price + (2 * atr_val)   # 2R
+    loss = price - atr_val         # 1R
 
-    # ATR based RR 2:1
-    atr_val = float(atr.iloc[last])
-    gain = price + (2 * atr_val)
-    loss = price - atr_val
+    prob = score * 100
 
-    # probabilidade heurística calibrada
-    prob_gain_first = score * 100
+    return prob, gain, loss, score
 
-    return prob_gain_first, gain, loss, score
 
 # =========================
 # APP
 # =========================
-st.title("Scanner Robusto B3 - Probabilidade Gain vs Loss")
+st.title("Scanner B3 Robusto - Probabilidade Gain vs Loss (2R ATR)")
 
 results = []
 errors = []
@@ -115,45 +121,46 @@ errors = []
 start = time.time()
 
 for t in TICKERS:
+
+    st.write(f"Baixando {t}...")
+
+    df = get_data(t)
+
+    if df is None:
+        errors.append((t,"sem dados"))
+        continue
+
+    if len(df) < 60:
+        errors.append((t,"dados insuficientes"))
+        continue
+
     try:
-        st.write(f"Baixando {t}...")
-
-        df = get_data(t)
-
-        if df is None:
-            errors.append((t,"sem dados"))
-            continue
-
         ema50, adx, dmp, dmn, k, d, atr = indicators(df)
 
-        if len(df) < 60:
-            errors.append((t,"dados insuficientes"))
-            continue
-
-        prob, gain, loss, score = probability_model(df, ema50, adx, dmp, dmn, k, d, atr)
+        prob, gain, loss, score = probability(df, ema50, adx, dmp, dmn, k, d, atr)
 
         results.append({
             "Ticker": t,
             "Score": round(score,3),
-            "Prob Gain (%)": round(prob,2),
-            "Gain ATR": round(gain,2),
-            "Loss ATR": round(loss,2)
+            "Prob (%)": round(prob,2),
+            "Gain (2R ATR)": round(gain,2),
+            "Loss (1R ATR)": round(loss,2)
         })
 
     except Exception as e:
         errors.append((t,str(e)))
 
+# =========================
+# RESULTADO
+# =========================
 df_res = pd.DataFrame(results)
 
 if not df_res.empty:
-    df_res = df_res.sort_values("Prob Gain (%)", ascending=False)
-
+    df_res = df_res.sort_values("Prob (%)", ascending=False)
     st.success("Scan concluído")
     st.dataframe(df_res)
-
 else:
     st.warning("Nenhum ativo válido encontrado")
 
-st.write("Debug erros:", errors)
-
+st.write("Erros:", errors)
 st.write("Tempo:", round(time.time()-start,2),"s")
